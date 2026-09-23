@@ -233,7 +233,7 @@
   }
 
   function taskTitle(clause, owner) {
-    let title = compact(clause).replace(/^(?:(?:хорошо|тогда|смотрите|давайте так|прямое решение|пожалуйста|и|а)\s*[,—:]?\s+)+/iu, '');
+    let title = compact(clause).replace(/^(?:(?:хорошо|понял[аи]?|принял[аи]?|тогда|смотрите|давайте так|прямое решение|пожалуйста|и|а)\s*[,—:]?\s+)+/iu, '');
     title = title.replace(/^пусть\s+/iu, '');
     if (owner !== UNKNOWN) {
       for (const name of [owner, owner.split(' ')[0]]) title = title.replace(new RegExp(`^${escapeRE(name)}(?=\\s|,)\\s*,?\\s*`, 'iu'), '');

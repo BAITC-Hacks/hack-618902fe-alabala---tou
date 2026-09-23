@@ -101,6 +101,17 @@
       heading.append(element('h3', '', (index + 1) + '. ' + task.title));
       const badge = element('span', 'review-badge', task.needsReview ? 'Нужно проверить' : 'Извлечено из текста');
       heading.append(badge);
+      const exclude = element('button', 'secondary', 'Исключить');
+      exclude.type = 'button';
+      exclude.setAttribute('aria-label', 'Исключить поручение ' + (index + 1));
+      exclude.addEventListener('click', () => {
+        result.tasks = result.tasks.filter(item => item !== task);
+        $('#taskCount').textContent = result.tasks.length;
+        $('#sideTaskCount').textContent = result.tasks.length;
+        renderStats();
+        renderTasks();
+      });
+      heading.append(exclude);
       card.append(heading);
       const fields = element('div', 'task-fields');
       for (const [key, title] of [['owner', 'Ответственный'], ['due', 'Срок']]) {
