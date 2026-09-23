@@ -21,7 +21,7 @@ import server
 
 TRANSCRIPT = {"text": "Айгуль, подготовьте отчёт до завтра", "duration": 2, "segments": []}
 ANALYSIS = {
-    "analysis_method": "ollama:test", "warnings": [],
+    "analysis_method": "local_llama:gemma-4-12b-it-Q6_K", "warnings": [],
     "tasks": [{"id": "task-0001", "title": "Подготовить отчёт", "assignee": "Айгуль",
                "deadline": "2026-09-24", "deadline_text": "до завтра", "status": "in_progress",
                "urgency": "high", "direction": "finance", "source_quote": TRANSCRIPT["text"],
@@ -101,6 +101,20 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.transcribe_audio.call_count, 3)
         self.assertEqual(self.analyze_meeting.call_count, 3)
 
+    def test_all_routes_forward_configured_llama_connection(self):
+        self.app.config.update(LLM_PROVIDER="local_llama", LLAMA_URL="http://localhost:9000/v1",
+                               LLAMA_MODEL="custom-Q6_K", LLAMA_TIMEOUT=73)
+        for route in ROUTES:
+            with self.subTest(route=route):
+                self.assertEqual(self.post(route).status_code, 200)
+                options = self.analyze_meeting.call_args.kwargs
+                self.assertEqual(set(options), {"meeting_date", "as_of", "provider", "llama_url",
+                                               "llama_model", "timeout"})
+                self.assertEqual(options["provider"], "local_llama")
+                self.assertEqual(options["llama_url"], "http://localhost:9000/v1")
+                self.assertEqual(options["llama_model"], "custom-Q6_K")
+                self.assertEqual(options["timeout"], 73)
+
     def test_only_three_application_routes(self):
         self.assertEqual({rule.rule for rule in self.app.url_map.iter_rules()}, set(ROUTES))
         for route in ROUTES:
@@ -149,10 +163,10 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(all(not path.exists() for path in self.paths))
 
     def test_analysis_failure_is_json_for_download_route(self):
-        self.analyze_meeting.side_effect = server.AnalysisError("Ollama недоступна")
+        self.analyze_meeting.side_effect = server.AnalysisError("llama.cpp недоступна")
         response = self.post(ROUTES[1])
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.get_json(), {"error": "Ollama недоступна"})
+        self.assertEqual(response.get_json(), {"error": "llama.cpp недоступна"})
 
     def test_missing_meeting_date_is_explicit_and_diarization_optional(self):
         response = self.post(meeting_date="", diarize="false")
@@ -168,6 +182,14 @@ class ServerTests(unittest.TestCase):
 
 
 class AdapterTests(unittest.TestCase):
+    def test_default_llama_configuration_uses_q6_k(self):
+        with patch.object(server, "load_dotenv"), patch.dict(server.os.environ, {}, clear=True):
+            app = server.create_app({"TESTING": True})
+        self.assertEqual(app.config["LLM_PROVIDER"], "local_llama")
+        self.assertEqual(app.config["LLAMA_URL"], "http://127.0.0.1:8080")
+        self.assertEqual(app.config["LLAMA_MODEL"], "gemma-4-12b-it-Q6_K")
+        self.assertEqual(app.config["LLAMA_TIMEOUT"], 600)
+
     def test_speech_adapter_releases_model_after_success_and_failure(self):
         fake = SimpleNamespace(transcribe_diarized=Mock(return_value=TRANSCRIPT),
                                transcribe_with_timestamps=Mock(return_value=TRANSCRIPT), release_models=Mock())

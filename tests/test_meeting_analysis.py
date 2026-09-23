@@ -24,7 +24,7 @@ def task(quote="айгуль подготовьте отчет до завтра
 
 def analyze(items, text=None, as_of=ANCHOR, **options):
     transcript = {"text": text or " ".join(item["source_quote"] for item in items)}
-    with patch.object(analysis, "_request_tasks", return_value=items):
+    with patch.object(analysis, "_request_llama_tasks", return_value=items):
         return analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=as_of, **options)
 
 
@@ -32,7 +32,7 @@ class GroundingTests(unittest.TestCase):
     def test_partial_speaker_segments_do_not_drop_tasks_from_full_text(self):
         transcript = {"text": "коллеги начинаем айгуль подготовьте отчет до завтра",
                       "segments": [{"text": "коллеги начинаем", "speaker": "SPEAKER_01"}]}
-        with patch.object(analysis, "_request_tasks", return_value=[task()]) as model:
+        with patch.object(analysis, "_request_llama_tasks", return_value=[task()]) as model:
             result = analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=ANCHOR)
         self.assertEqual(len(result["tasks"]), 1)
         self.assertIsNone(result["tasks"][0]["source_speaker"])
@@ -70,7 +70,7 @@ class GroundingTests(unittest.TestCase):
 
     def test_source_quote_uses_original_spacing_case_and_speaker(self):
         transcript = {"segments": [{"speaker": "SPEAKER_03", "text": "айгуль  подготовьте отчет до завтра"}]}
-        with patch.object(analysis, "_request_tasks", return_value=[task("Айгуль подготовьте отчет до завтра")]):
+        with patch.object(analysis, "_request_llama_tasks", return_value=[task("Айгуль подготовьте отчет до завтра")]):
             result = analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=ANCHOR)
         item = result["tasks"][0]
         self.assertEqual(item["source_quote"], "айгуль  подготовьте отчет до завтра")
@@ -82,7 +82,7 @@ class GroundingTests(unittest.TestCase):
             {"speaker": "SPEAKER_00", "text": "айгуль подготовьте отчет"},
             {"speaker": "SPEAKER_01", "text": "до завтра"},
         ]}
-        with patch.object(analysis, "_request_tasks", return_value=[task()]):
+        with patch.object(analysis, "_request_llama_tasks", return_value=[task()]):
             result = analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=ANCHOR)
         self.assertIsNone(result["tasks"][0]["source_speaker"])
 
@@ -131,7 +131,7 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(result["dashboard"]["total"], 2)
 
     def test_empty_transcript_returns_empty_dashboard_without_request(self):
-        with patch.object(analysis, "_request_tasks") as request:
+        with patch.object(analysis, "_request_llama_tasks") as request:
             result = analysis.analyze_meeting({"text": " "}, meeting_date=ANCHOR, as_of=ANCHOR)
         request.assert_not_called()
         self.assertEqual(result["dashboard"]["total"], 0)
@@ -167,45 +167,94 @@ class DateAndChunkTests(unittest.TestCase):
 
     def test_multichunk_report_processes_every_chunk_and_announces_limitation(self):
         transcript = {"text": "слово " * 2000}
-        with patch.object(analysis, "_request_tasks", return_value=[]) as request:
+        with patch.object(analysis, "_request_llama_tasks", return_value=[]) as request:
             result = analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=ANCHOR)
         self.assertEqual(request.call_count, len(analysis._chunks(transcript)))
         self.assertTrue(any("фрагмент" in warning for warning in result["warnings"]))
 
 
-class OllamaTransportTests(unittest.TestCase):
-    def response(self, content, **outer):
+class LocalLlamaTransportTests(unittest.TestCase):
+    def response(self, content, finish_reason="stop"):
+        return self.raw_response(json.dumps({"choices": [{
+            "finish_reason": finish_reason, "message": {"role": "assistant", "content": content},
+        }]}).encode())
+
+    def raw_response(self, payload):
         response = MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps({
-            "done": True, "message": {"content": content}, **outer,
-        }).encode()
+        response.__enter__.return_value.read.return_value = payload
         return response
 
-    def test_configured_url_schema_nonstreaming_and_gpu_unload(self):
-        with patch.object(analysis, "urlopen", return_value=self.response('{"tasks": []}')) as request:
-            result = analysis._request_tasks([{"text": "начинаем", "speaker": None}], ANCHOR,
-                                             "http://localhost:11434/", "Gemma-4-12B-it-Q6_K:latest", 42)
-        self.assertEqual(result, [])
-        sent = request.call_args.args[0]
-        self.assertEqual(sent.full_url, "http://localhost:11434/api/chat")
-        body = json.loads(sent.data)
-        self.assertFalse(body["stream"])
-        self.assertEqual(body["keep_alive"], 0)
-        self.assertEqual(body["format"], analysis.TASK_SCHEMA)
-        self.assertEqual(request.call_args.kwargs["timeout"], 42)
+    def test_configured_urls_schema_nonstreaming_and_disabled_thinking(self):
+        for url in ("http://localhost:8080/", "http://localhost:8080/v1", "http://localhost:8080/v1/"):
+            with self.subTest(url=url), patch.object(analysis, "urlopen", return_value=self.response('{"tasks": []}')) as request:
+                result = analysis._request_llama_tasks([{"text": "начинаем", "speaker": None}], ANCHOR,
+                                                       url, "gemma-4-12b-it-Q6_K", 42)
+            self.assertEqual(result, [])
+            sent = request.call_args.args[0]
+            self.assertEqual(sent.full_url, "http://localhost:8080/v1/chat/completions")
+            self.assertEqual(sent.get_method(), "POST")
+            body = json.loads(sent.data)
+            self.assertEqual(body["model"], "gemma-4-12b-it-Q6_K")
+            self.assertFalse(body["stream"])
+            self.assertEqual(body["response_format"], {"type": "json_schema", "json_schema": {
+                "name": "meeting_tasks", "strict": True, "schema": analysis.TASK_SCHEMA,
+            }})
+            self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+            self.assertEqual(request.call_args.kwargs["timeout"], 42)
 
-    def test_connection_timeout_missing_model_and_bad_json_have_no_fallback(self):
+    def test_default_provider_uses_q6_k_model(self):
+        transcript = {"text": "начинаем"}
+        with patch.object(analysis, "_request_llama_tasks", return_value=[]) as request:
+            result = analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=ANCHOR)
+        request.assert_called_once_with(analysis._chunks(transcript)[0], ANCHOR,
+                                        "http://127.0.0.1:8080", "gemma-4-12b-it-Q6_K", 600)
+        self.assertEqual(result["analysis_method"], "local_llama:gemma-4-12b-it-Q6_K")
+
+    def test_unsupported_provider_fails_without_network_request(self):
+        with patch.object(analysis, "urlopen") as request, self.assertRaises(analysis.AnalysisError):
+            analysis.analyze_meeting({"text": "начинаем"}, meeting_date=ANCHOR, as_of=ANCHOR,
+                                     provider="unsupported")
+        request.assert_not_called()
+
+    def test_invalid_server_url_fails_before_network_request(self):
+        for url in ("file:///private/model", "localhost:8080", "http://", "http://[",
+                    "http://localhost:8080?key=private", "http://localhost:8080#private"):
+            with self.subTest(url=url), patch.object(analysis, "urlopen") as request:
+                with self.assertRaises(analysis.AnalysisError):
+                    analysis.analyze_meeting({"text": "начинаем"}, meeting_date=ANCHOR, as_of=ANCHOR,
+                                             llama_url=url)
+                request.assert_not_called()
+
+    def test_connection_timeout_and_http_failures_have_no_fallback(self):
         failures = [URLError("secret-network-details"), TimeoutError("private-details"),
-                    HTTPError("private", 404, "not found", {}, None)]
+                    OSError("private-details"), HTTPError("private", 404, "not found", {}, None),
+                    HTTPError("private", 503, "loading", {}, None), HTTPError("private", 400, "bad request", {}, None)]
         for failure in failures:
-            with self.subTest(failure=type(failure).__name__), patch.object(analysis, "urlopen", side_effect=failure):
+            with self.subTest(failure=failure), patch.object(analysis, "urlopen", side_effect=failure) as request:
                 with self.assertRaises(analysis.AnalysisError) as raised:
                     analysis.analyze_meeting({"text": "тест"}, meeting_date=ANCHOR, as_of=ANCHOR)
+                request.assert_called_once()
+                self.assertIn("llama.cpp", str(raised.exception))
                 self.assertNotIn("private", str(raised.exception))
                 self.assertNotIn("secret", str(raised.exception))
-        for content, outer in [("not json", {}), ("[]", {}), ('{"tasks": []}', {"done_reason": "length"}),
-                               ('{"tasks": []}', {"done": False})]:
-            with self.subTest(content=content, outer=outer), patch.object(analysis, "urlopen", return_value=self.response(content, **outer)):
+
+    def test_invalid_or_truncated_model_content_is_rejected(self):
+        for content, finish_reason in [("not json", "stop"), ("[]", "stop"), (None, "stop"),
+                                       ('{"tasks": []}', "length"), ('{"tasks": []}', None)]:
+            with self.subTest(content=content, finish_reason=finish_reason), patch.object(
+                analysis, "urlopen", return_value=self.response(content, finish_reason)
+            ):
+                with self.assertRaises(analysis.AnalysisError):
+                    analysis.analyze_meeting({"text": "тест"}, meeting_date=ANCHOR, as_of=ANCHOR)
+
+    def test_malformed_response_envelopes_and_oversized_responses_are_rejected(self):
+        payloads = [b"not json", b"[]", b"{}", b'{"choices": []}', b'{"choices": [null]}',
+                    b'{"choices": [{}, {}]}', b'{"choices": [{"finish_reason": "stop"}]}',
+                    b" " * 2_000_001]
+        for payload in payloads:
+            with self.subTest(size=len(payload), prefix=payload[:80]), patch.object(
+                analysis, "urlopen", return_value=self.raw_response(payload)
+            ):
                 with self.assertRaises(analysis.AnalysisError):
                     analysis.analyze_meeting({"text": "тест"}, meeting_date=ANCHOR, as_of=ANCHOR)
 

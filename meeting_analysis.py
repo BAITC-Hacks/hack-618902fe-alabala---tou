@@ -1,4 +1,4 @@
-"""Grounded RU/KZ meeting-task extraction via local Ollama or llama.cpp.
+"""Grounded RU/KZ meeting-task extraction via local llama.cpp.
 
 The model extracts meaning; Python validates evidence and computes the dashboard.
 No API keys, hosted services, or silent fallback to synthetic results are used.
@@ -132,43 +132,6 @@ def _parse_tasks(content: str) -> list:
     if len(result["tasks"]) > 30:
         raise ValueError("too many tasks")
     return result["tasks"]
-
-
-def _request_tasks(chunk: list[dict], meeting_date: date, url: str, model: str, timeout: float) -> list:
-    try:
-        parsed = urlsplit(url)
-    except ValueError as exc:
-        raise AnalysisError("OLLAMA_URL должен быть адресом HTTP/HTTPS сервера Ollama.") from exc
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.query or parsed.fragment:
-        raise AnalysisError("OLLAMA_URL должен быть адресом HTTP/HTTPS сервера Ollama.")
-    payload = {
-        "model": model, "stream": False, "format": TASK_SCHEMA, "keep_alive": 0,
-        "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 3072},
-        "messages": _messages(chunk, meeting_date),
-    }
-    request = Request(url.rstrip("/") + "/api/chat", data=json.dumps(payload).encode("utf-8"),
-                      headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read(2_000_001)
-        if len(raw) > 2_000_000:
-            raise AnalysisError("Ответ Ollama слишком большой. Проверьте модель и повторите запрос.")
-        outer = json.loads(raw)
-        if not isinstance(outer, dict) or outer.get("done") is not True or outer.get("done_reason") == "length":
-            raise AnalysisError("Ollama не завершила анализ. Повторите запрос с более короткой записью.")
-        return _parse_tasks(outer["message"]["content"])
-    except HTTPError as exc:
-        message = ("Модель Ollama не найдена. Установите модель командой ollama pull из README."
-                   if exc.code == 404 else "Ollama отклонила запрос. Проверьте модель и журнал Ollama.")
-        raise AnalysisError(message) from exc
-    except (TimeoutError, socket.timeout) as exc:
-        raise AnalysisError("Истекло время анализа Ollama. Увеличьте OLLAMA_TIMEOUT или сократите запись.") from exc
-    except URLError as exc:
-        raise AnalysisError("Ollama недоступна. Запустите ollama serve и проверьте OLLAMA_URL.") from exc
-    except OSError as exc:
-        raise AnalysisError("Соединение с Ollama прервано. Проверьте сервер и повторите запрос.") from exc
-    except (ValueError, KeyError, TypeError, UnicodeError) as exc:
-        raise AnalysisError("Ollama вернула некорректный JSON. Проверьте поддержку структурированного вывода моделью.") from exc
 
 
 def _request_llama_tasks(chunk: list[dict], meeting_date: date, url: str, model: str, timeout: float) -> list:
@@ -367,16 +330,12 @@ def _validate_task(raw: dict, chunk: list[dict], anchor: date, as_of: date) -> d
 
 
 def analyze_meeting(transcript: dict, *, meeting_date: date, as_of: date,
-                    provider: str = "ollama", ollama_url: str = "http://127.0.0.1:11434",
-                    ollama_model: str = "Gemma-4-12B-it-Q6_K:latest", timeout: float = 120,
-                    llama_url: str = "http://127.0.0.1:8080", llama_model: str = "gemma-4-12b-it") -> dict:
+                    provider: str = "local_llama", timeout: float = 600,
+                    llama_url: str = "http://127.0.0.1:8080",
+                    llama_model: str = "gemma-4-12b-it-Q6_K") -> dict:
     """Return tasks, aggregate counts, and limitations; raise on provider failure."""
-    if provider not in {"ollama", "local_llama"}:
-        raise AnalysisError("Поддерживаются LLM_PROVIDER=ollama и local_llama (llama.cpp).")
-    if provider == "local_llama":
-        request_tasks, url, model = _request_llama_tasks, llama_url, llama_model
-    else:
-        request_tasks, url, model = _request_tasks, ollama_url, ollama_model
+    if provider != "local_llama":
+        raise AnalysisError("Поддерживается только LLM_PROVIDER=local_llama (llama.cpp).")
     if not isinstance(transcript, dict):
         raise AnalysisError("Некорректная структура расшифровки.")
     warnings = ["Статусы отражают расшифровку и дату отчета; последующие изменения не отслеживаются."]
@@ -397,7 +356,7 @@ def analyze_meeting(transcript: dict, *, meeting_date: date, as_of: date,
     if len(chunks) > 1:
         warnings.append("Длинная запись разобрана по фрагментам с перекрытием. Проверьте повторы и связи между фрагментами.")
     for chunk in chunks:
-        for raw in request_tasks(chunk, meeting_date, url, model, timeout):
+        for raw in _request_llama_tasks(chunk, meeting_date, llama_url, llama_model, timeout):
             try:
                 task = _validate_task(raw, chunk, meeting_date, as_of)
             except (ValueError, TypeError, OverflowError) as exc:
@@ -410,7 +369,7 @@ def analyze_meeting(transcript: dict, *, meeting_date: date, as_of: date,
             tasks.append(task)
     if any(task["needs_review"] for task in tasks):
         warnings.append("Поручения с needs_review=true требуют проверки: данные отсутствуют или неоднозначны.")
-    return {"analysis_method": f"{provider}:{model}", "tasks": tasks, "warnings": warnings, "dashboard": {
+    return {"analysis_method": f"{provider}:{llama_model}", "tasks": tasks, "warnings": warnings, "dashboard": {
         "total": len(tasks),
         "by_status": {key: sum(t["status"] == key for t in tasks) for key in ("in_progress", "overdue", "completed")},
         "by_urgency": {key: sum(t["urgency"] == key for t in tasks) for key in ("high", "medium", "low")},

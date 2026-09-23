@@ -1,9 +1,9 @@
 # QORIT — протоколирование совещаний
 
-Локальный конвейер: аудио → Kazakh/Russian STT → NeMo-диаризация → Ollama →
+Локальный конвейер: аудио → Kazakh/Russian STT → NeMo-диаризация → llama.cpp (Gemma Q6_K) →
 поручения, сводка статусов и классификация → JSON, PDF или DOCX.
 Исходные записи и расшифровки не отправляются во внешние сервисы:
-`OLLAMA_URL` должен указывать на ваш локальный сервер.
+`LLAMA_URL` должен указывать на ваш локальный сервер.
 
 ## Быстрый запуск API в готовом окружении
 
@@ -15,33 +15,72 @@
 cp -n .env.example .env
 ```
 
-Используется уже установленная в Windows Ollama модель
-`Gemma-4-12B-it-Q6_K:latest`. Проверьте её точный тег в PowerShell:
+### Gemma 4 12B IT Q6_K через llama.cpp (`local_llama`)
+
+В `.env.example` выбран `LLM_PROVIDER=local_llama`. Это подключение к отдельно
+запущенному `llama-server` по `/v1/chat/completions`. Python-приложение не загружает
+GGUF самостоятельно; `llama-cpp-python` устанавливать не требуется.
+
+Используется квантованный файл
+[`gemma-4-12b-it-Q6_K.gguf` от Unsloth](https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/blob/main/gemma-4-12b-it-Q6_K.gguf)
+и актуальная сборка [llama.cpp](https://github.com/ggml-org/llama.cpp/releases).
+Поместите уже скачанный файл в `models/llm/` и из корня проекта запустите:
 
 ```powershell
-ollama list
+.\run_llama.ps1 -LlamaServer "C:\llama.cpp\llama-server.exe"
 ```
 
-В `.env` задайте `LLM_PROVIDER=ollama`, `OLLAMA_URL=http://127.0.0.1:11434`
-и `OLLAMA_MODEL=Gemma-4-12B-it-Q6_K:latest`. Старое значение `local_llama` также распознаётся
-как Ollama. Другую локальную модель можно указать через `OLLAMA_MODEL`;
-она должна поддерживать [структурированный JSON-вывод](https://docs.ollama.com/capabilities/structured-outputs).
-Если Ollama работает в другом окружении, задайте доступный оттуда адрес.
-На этой машине Ollama запущена в Windows и сейчас слушает только Windows
-`127.0.0.1:11434`; сервер внутри WSL по этому адресу её не видит. Чтобы
-подключить WSL, настройте Ollama на приём соединений с интерфейса WSL и
-укажите адрес Windows со стороны WSL в `OLLAMA_URL`. Например, после настройки
-Windows Ollama с `OLLAMA_HOST=0.0.0.0:11434` и её перезапуска:
+Если файл находится в другом каталоге, добавьте
+`-ModelPath "D:\models\gemma-4-12b-it-Q6_K.gguf"`. Скрипт выбирает именно этот файл,
+проверяет его наличие и имя, не скачивает веса. Путь к `llama-server.exe` замените своим;
+если он доступен в PATH, параметр `-LlamaServer` можно опустить.
+
+Эквивалентная команда без скрипта, из каталога с `llama-server.exe`:
+
+```powershell
+.\llama-server.exe -m "C:\models\gemma-4-12b-it-Q6_K.gguf" --alias gemma-4-12b-it-Q6_K --host 127.0.0.1 --port 8080 --jinja -c 8192 -np 1 -ngl 0
+```
+
+Квантование определяется содержимым GGUF, выбранного через `-m`; смена имени API
+не меняет квантование загруженной модели. Здесь `-ngl 0` оставляет LLM на CPU,
+чтобы её постоянно загруженная модель не занимала VRAM, необходимую STT/NeMo.
+Для CUDA-сборки и при достаточном запасе VRAM можно увеличить `-ngl` (число слоёв
+на GPU, параметр скрипта `-GpuLayers`); `-ngl 999` запрашивает перенос всех слоёв. `-c 8192` задаёт контекст,
+`-np 1` — один слот обработки. Флаги описаны в
+[документации llama-server](https://github.com/ggml-org/llama.cpp/tree/master/tools/server).
+
+Настройки приложения:
+
+```dotenv
+LLM_PROVIDER=local_llama
+LLAMA_URL=http://127.0.0.1:8080
+LLAMA_MODEL=gemma-4-12b-it-Q6_K
+LLAMA_TIMEOUT=600
+```
+
+`LLAMA_MODEL` должен совпадать с `--alias`, это имя API, а не путь к GGUF.
+`LLAMA_TIMEOUT` — время ожидания одного фрагмента в секундах. Приложение
+запрашивает JSON по схеме и отключает thinking через `enable_thinking=false`.
+Дождитесь загрузки модели; проверить сервер можно через
+`Invoke-RestMethod http://127.0.0.1:8080/health` в PowerShell.
+
+Если API и llama.cpp работают в одном окружении, используйте адрес выше.
+Для `server.py` в WSL с сетью NAT и llama.cpp в Windows запустите llama-server
+с `--host 0.0.0.0` (в скрипте `-ListenAddress 0.0.0.0`), разрешите доступ из WSL в Windows Firewall и перед запуском API
+укажите адрес Windows со стороны WSL:
 
 ```bash
-export OLLAMA_URL="http://$(ip route show default | awk '{print $3}'):11434"
+export LLAMA_URL="http://$(ip route show default | awk '{print $3}'):8080"
 /opt/qorit-nemo/bin/python server.py
 ```
 
-Учитывайте правила Windows Firewall для WSL. Адрес шлюза WSL может меняться;
-команда выше получает его при каждом запуске. При `OLLAMA_HOST=0.0.0.0:11434`
-Ollama слушает и другие сетевые интерфейсы, поэтому ограничьте доступ к порту
-в Windows Firewall, если сервер доступен из общей сети.
+При `--host 0.0.0.0` ограничьте доступ к порту в Firewall локальным окружением.
+Если llama-server также запущен в WSL, Windows-путь к файлу замените на
+`/mnt/c/...`, а в `LLAMA_URL` оставьте `http://127.0.0.1:8080`.
+
+### Запуск HTTP API
+
+После запуска выбранного LLM-сервера, из корня проекта в WSL:
 
 ```bash
 /opt/qorit-nemo/bin/python server.py
@@ -102,7 +141,7 @@ PDF/DOCX используют ту же схему анализа, что и JSO
   "as_of": "2026-09-23",
   "timezone": "Asia/Qyzylorda",
   "generated_at": "2026-09-23T10:00:00+00:00",
-  "analysis_method": "ollama:Gemma-4-12B-it-Q6_K:latest",
+  "analysis_method": "local_llama:gemma-4-12b-it-Q6_K",
   "transcript": {
     "text": "айгуль подготовьте отчет до завтра",
     "segments": [],
@@ -139,9 +178,9 @@ PDF/DOCX используют ту же схему анализа, что и JSO
 
 ## Правила анализа и дашборд
 
-Ollama выделяет поручения из русской, казахской и смешанной речи, включая
+Локальная LLM выделяет поручения из русской, казахской и смешанной речи, включая
 распознавание без пунктуации. Python проверяет JSON и наличие цитат в исходном
-тексте. Ошибки Ollama возвращаются клиенту; демонстрационные результаты
+тексте. Ошибки LLM возвращаются клиенту; демонстрационные результаты
 или скрытый переход на другой анализатор не используются.
 
 - `assignee=null`, если имя/роль нельзя подтвердить цитатой. Имя сохраняется
@@ -188,19 +227,20 @@ Ollama выделяет поручения из русской, казахско
 | 413 | Превышен размер запроса или длительность аудио |
 | 415 | Неподдерживаемое расширение |
 | 422 | Повреждённое/нечитаемое аудио или таймаут декодирования |
-| 502 | Ошибка Ollama, JSON или проверки извлечённых поручений |
+| 502 | Ошибка llama.cpp, JSON или проверки извлечённых поручений |
 | 503 | Занят GPU-конвейер, нет FFmpeg, CUDA, моделей или зависимостей STT |
 | 500 | Внутренняя ошибка обработки/экспорта; детали в журнале сервера |
 
 Лимиты в `.env.example`: `MAX_UPLOAD_MB=256`, `MAX_AUDIO_SECONDS=7200`,
-`AUDIO_DECODE_TIMEOUT=300` и `OLLAMA_TIMEOUT=180` секунд на фрагмент.
+`AUDIO_DECODE_TIMEOUT=300`, `LLAMA_TIMEOUT=600` секунд на фрагмент.
 Часовой пояс статусов задаёт `APP_TIMEZONE`.
 
 Запускайте **один процесс сервера на GPU**. Запросы распознавания/анализа не
 выполняются одновременно: второй получает 503 с `Retry-After: 30`.
-После ASR сервер освобождает модель и CUDA-кэш, передавая память Ollama;
-Ollama получает `keep_alive=0` для освобождения своей модели после ответа.
-Отдельно запущенные процессы STT/Ollama не координируются этим lock.
+После ASR сервер освобождает модель и CUDA-кэш. Отдельный `llama-server` сохраняет
+модель в памяти между запросами: при использовании GPU оставьте VRAM для STT/NeMo
+или используйте `-ngl 0` для LLM на CPU. Отдельно запущенные процессы
+STT/llama.cpp не координируются этим lock.
 
 PDF использует встроенный Unicode TTF. Для нестандартной установки задайте
 `REPORT_FONT_PATH` и при необходимости `REPORT_FONT_BOLD_PATH`.
@@ -274,16 +314,18 @@ ASR читает звук окнами, не загружая всю волну 
 ## Docker
 
 `Dockerfile.nemo` сохраняет CLI-режим по умолчанию и включает модули API.
-Подготовьте образ, локальные модели и Ollama заранее:
+Подготовьте образ, локальные модели и выбранный LLM-сервер заранее:
 
 ```bash
 docker build -f Dockerfile.nemo -t qorit-nemo .
 docker run --rm --gpus all --network none -v "$PWD/models:/app/models:ro" -v "$PWD/media:/app/media:ro" -v "$PWD/results:/app/results" qorit-nemo
-# API: Ollama должна быть доступна из контейнера, например на Docker Desktop:
-docker run --rm --gpus all -p 8000:8000 --env-file .env -e OLLAMA_URL=http://host.docker.internal:11434 -v "$PWD/models:/app/models:ro" qorit-nemo python server.py
+# API: llama-server должен быть доступен из контейнера, например на Docker Desktop:
+docker run --rm --gpus all -p 8000:8000 --env-file .env -e LLM_PROVIDER=local_llama -e LLAMA_URL=http://host.docker.internal:8080 -v "$PWD/models:/app/models:ro" qorit-nemo python server.py
 ```
 
-В API-режиме не используйте `--network none`: нужен доступ к локальной Ollama.
+В API-режиме не используйте `--network none`: нужен доступ к локальному LLM-серверу.
+Для доступа из контейнера llama-server должен слушать доступный интерфейс хоста
+(например, `--host 0.0.0.0` с ограничением доступа в Firewall).
 
 ## Проверки
 
@@ -294,7 +336,7 @@ docker run --rm --gpus all -p 8000:8000 --env-file .env -e OLLAMA_URL=http://hos
 node --test tests/test-transcript-analyzer.cjs
 ```
 
-Тесты API/анализа подменяют GPU и ответы Ollama, проверяют валидацию,
+Тесты API/анализа подменяют GPU и ответы llama.cpp, проверяют валидацию,
 статусы/даты/цитаты, структуру скачанных файлов, UTF-8 и очистку ресурсов.
 Отдельная проверка FFmpeg декодирует настоящие WAV и WebM.
 Для оценки качества модели нужен дополнительный запуск на реальных совещаниях.

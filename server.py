@@ -139,13 +139,9 @@ def _process_upload() -> dict:
             analysis = analyze_meeting(
                 transcript, meeting_date=meeting_date, as_of=as_of,
                 provider=current_app.config["LLM_PROVIDER"],
-                ollama_url=current_app.config["OLLAMA_URL"],
-                ollama_model=current_app.config["OLLAMA_MODEL"],
                 llama_url=current_app.config["LLAMA_URL"],
                 llama_model=current_app.config["LLAMA_MODEL"],
-                timeout=current_app.config[
-                    "LLAMA_TIMEOUT" if current_app.config["LLM_PROVIDER"] == "local_llama" else "OLLAMA_TIMEOUT"
-                ],
+                timeout=current_app.config["LLAMA_TIMEOUT"],
             )
         finally:
             _PIPELINE_LOCK.release()
@@ -170,13 +166,10 @@ def create_app(config: dict | None = None) -> Flask:
         FFMPEG_BINARY=os.getenv("FFMPEG_BINARY", "ffmpeg"),
         APP_TIMEZONE=os.getenv("APP_TIMEZONE", "Asia/Qyzylorda"),
         STT_DIARIZE=os.getenv("STT_DIARIZE", "true"),
-        LLM_PROVIDER=os.getenv("LLM_PROVIDER", "ollama"),
-        OLLAMA_URL=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
-        OLLAMA_MODEL=os.getenv("OLLAMA_MODEL", "Gemma-4-12B-it-Q6_K:latest"),
-        OLLAMA_TIMEOUT=float(os.getenv("OLLAMA_TIMEOUT", "180")),
+        LLM_PROVIDER=os.getenv("LLM_PROVIDER", "local_llama"),
         LLAMA_URL=os.getenv("LLAMA_URL", "http://127.0.0.1:8080"),
-        LLAMA_MODEL=os.getenv("LLAMA_MODEL", "gemma-4-12b-it"),
-        LLAMA_TIMEOUT=float(os.getenv("LLAMA_TIMEOUT", "180")),
+        LLAMA_MODEL=os.getenv("LLAMA_MODEL", "gemma-4-12b-it-Q6_K"),
+        LLAMA_TIMEOUT=float(os.getenv("LLAMA_TIMEOUT", "600")),
     )
     if config:
         app.config.update(config)
