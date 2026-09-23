@@ -105,6 +105,56 @@ def _evidence(quote: str, text: str) -> tuple[str, int, int] | None:
     return (match[0], match.start(), match.end()) if match else None
 
 
+def _expand_segment_evidence(quote: str, chunk: list[dict]) -> tuple[str, int, int] | None:
+    """Restore omitted whole turns only; never skip words inside a quoted turn.
+
+    The quote must match a suffix of its first turn, complete intermediate
+    turns, and a prefix of its last turn. All possible alignments must identify
+    the same original span. Return that entire span, including omitted turns.
+    """
+    words = tuple(word.lower() for word in quote.split())
+    if len(words) < 2:
+        return None
+    segments, position = [], 0
+    for item in chunk:
+        tokens = list(re.finditer(r"\S+", item["text"]))
+        segments.append((tuple(token[0].lower() for token in tokens),
+                         [(position + token.start(), position + token.end()) for token in tokens]))
+        position += len(item["text"]) + 1
+    spans = set()
+    for first, (segment_words, offsets) in enumerate(segments):
+        for start_word in range(len(segment_words)):
+            suffix = segment_words[start_word:]
+            if len(suffix) >= len(words) or suffix != words[:len(suffix)]:
+                continue
+            start = offsets[start_word][0]
+            # A state is the number of quote words consumed at a turn boundary.
+            # Keeping it unchanged skips exactly one complete transcript turn.
+            consumed_counts = {len(suffix)}
+            for following_words, following_offsets in segments[first + 1:]:
+                if not following_words:
+                    continue
+                next_counts = set(consumed_counts)
+                for consumed in consumed_counts:
+                    size = min(len(following_words), len(words) - consumed)
+                    if words[consumed:consumed + size] != following_words[:size]:
+                        continue
+                    if consumed + size == len(words):
+                        spans.add((start, following_offsets[size - 1][1]))
+                        if len(spans) > 1:
+                            return None
+                    else:
+                        next_counts.add(consumed + size)
+                consumed_counts = next_counts
+    if len(spans) != 1:
+        return None
+    start, end = next(iter(spans))
+    if end - start > _FIELDS["source_quote"]["maxLength"]:
+        return None
+    text = " ".join(item["text"] for item in chunk)
+    return text[start:end], start, end
+
+
 def _chunks(transcript: dict, limit: int = 4500) -> list[list[dict]]:
     raw = transcript.get("segments") or [{"text": transcript.get("text", ""), "speaker": None}]
     segments = []
@@ -310,6 +360,10 @@ def _validate_task(raw: dict, chunk: list[dict], anchor: date, as_of: date) -> d
         raise ValueError("invalid classification")
     text = " ".join(item["text"] for item in chunk)
     evidence = _evidence(raw["source_quote"], text)
+    expanded = False
+    if not evidence:
+        evidence = _expand_segment_evidence(raw["source_quote"], chunk)
+        expanded = evidence is not None
     if not evidence:
         raise ValueError("ungrounded task")
     quote, start, end = evidence
@@ -320,7 +374,7 @@ def _validate_task(raw: dict, chunk: list[dict], anchor: date, as_of: date) -> d
             speakers.add(item["speaker"])
         position = item_end + 1
     assignee = raw["assignee"]
-    review = raw["needs_review"]
+    review = raw["needs_review"] or expanded
     if assignee:
         name_evidence = _evidence(assignee, quote)
         if name_evidence:

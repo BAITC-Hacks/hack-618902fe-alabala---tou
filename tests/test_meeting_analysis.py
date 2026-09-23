@@ -150,7 +150,7 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(len(model.call_args.kwargs["repair_requests"]), 2)
         self.assertEqual(result["dashboard"]["total"], 1)
 
-    def test_real_meeting_quote_cannot_skip_intervening_speaker_reply(self):
+    def test_real_meeting_quote_restores_whole_intervening_reply_without_llm_retry(self):
         # Regression from the real API capture: the model omitted the objection
         # between the requested audit and the subsequently agreed deadline.
         opening = "так проврьте мне нужен полный аудит две недели вам достаточно"
@@ -162,17 +162,12 @@ class GroundingTests(unittest.TestCase):
         raw = task(opening.removeprefix("так ") + " " + agreement,
                    title="проврьте мне нужен полный аудит", assignee="нурлн сагатович",
                    deadline="2026-10-15", deadline_text="к пятнадцатому октября",
-                   urgency="high", direction="safety", needs_review=True)
-        with self.assertRaisesRegex(ValueError, "ungrounded task"):
-            analysis._validate_task(raw, chunk, ANCHOR, ANCHOR)
+                   urgency="high", direction="safety", needs_review=False)
         repair = {"source_quote": " ".join((opening.removeprefix("так "), reply, agreement)),
                   "deadline_text": "к пятнадцатому октября"}
-        with patch.object(analysis, "_request_llama_tasks", side_effect=[[raw], [repair]]) as model:
+        with patch.object(analysis, "_request_llama_tasks", return_value=[raw]) as model:
             result = analysis.analyze_meeting({"segments": chunk}, meeting_date=ANCHOR, as_of=ANCHOR)
-        model.assert_called_with(chunk, ANCHOR, "http://127.0.0.1:8080", "gemma-4-12b-it-Q4_K_S", 600,
-                                 repair_requests=[{"title": raw["title"], "source_quote": raw["source_quote"],
-                                                   "deadline_text": raw["deadline_text"],
-                                                   "validation_error": "ungrounded task"}])
+        model.assert_called_once_with(chunk, ANCHOR, "http://127.0.0.1:8080", "gemma-4-12b-it-Q4_K_S", 600)
         item = result["tasks"][0]
         self.assertEqual(item["title"], raw["title"])
         self.assertEqual(item["source_quote"], repair["source_quote"])
@@ -181,6 +176,37 @@ class GroundingTests(unittest.TestCase):
         self.assertIsNone(item["source_speaker"])
         self.assertIsNone(item["assignee"])
         self.assertTrue(item["needs_review"])
+
+    def test_segment_expansion_rejects_invented_words_partial_turns_ambiguity_and_long_spans(self):
+        cases = [
+            ("подготовьте выдуманный отчет до завтра", ["подготовьте отчет", "ответ участника", "до завтра"]),
+            ("подготовьте отчет до завтра", ["подготовьте полный отчет", "ответ участника", "до завтра"]),
+            ("подготовьте отчет до завтра", ["подготовьте отчет пожалуйста", "ответ участника", "до завтра"]),
+            ("подготовьте отчет до завтра", ["подготовьте отчет", "ответ участника", "обязательно до завтра"]),
+            ("подготовьте отчет до завтра", ["подготовьте отчет", "ответ участника", "до завтра",
+                                             "другой ответ", "до завтра"]),
+            ("подготовьте отчет до завтра", ["подготовьте отчет", "ответ " * 500, "до завтра"]),
+            ("подготовьте отчет готово до завтра", ["подготовьте отчет", "готово почти", "до завтра"]),
+        ]
+        for quote, turns in cases:
+            chunk = [{"text": text, "speaker": f"SPEAKER_{index:02d}"} for index, text in enumerate(turns)]
+            with self.subTest(quote=quote, turns=len(turns)):
+                self.assertIsNone(analysis._expand_segment_evidence(quote, chunk))
+                with self.assertRaisesRegex(ValueError, "ungrounded task"):
+                    analysis._validate_task(task(quote), chunk, ANCHOR, ANCHOR)
+
+    def test_segment_expansion_preserves_original_case_spacing_and_matched_middle_turn(self):
+        turns = ["начинаем Айгуль  подготовьте отчет", "первый ответ", "и проверьте договор",
+                 "второй ответ", "до  завтра закончили"]
+        chunk = [{"text": text, "speaker": f"SPEAKER_{index:02d}"} for index, text in enumerate(turns)]
+        raw = task("айгуль подготовьте отчет и проверьте договор до завтра")
+        item = analysis._validate_task(raw, chunk, ANCHOR, ANCHOR)
+        expected = " ".join(turns).removeprefix("начинаем ").removesuffix(" закончили")
+        self.assertEqual(item["source_quote"], expected)
+        self.assertEqual(item["assignee"], "Айгуль")
+        self.assertEqual(item["deadline"], "2026-09-24")
+        self.assertTrue(item["needs_review"])
+        self.assertIsNone(item["source_speaker"])
 
     def test_failed_incomplete_or_task_replacing_repair_is_rejected_without_third_request(self):
         repairs = [[], [{"source_quote": None, "deadline_text": None}],
