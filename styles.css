@@ -79,6 +79,16 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 .state-done { color: #9de1c6; background: #1c3e37; }
 .reminder-banner { margin-top: 16px; padding: 14px 16px; border: 1px solid #665a37; border-radius: 6px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: #302e25; }
 .reminder-banner p { margin: 0; font-size: 12px; color: #eed599; line-height: 1.6; flex: 1 1 280px; }
+.backend-status { display: flex; align-items: center; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
+.backend-status p { flex: 1 1 250px; line-height: 1.6; }
+.audio-processing { padding: 18px; margin: 16px 0 24px; border: 1px solid #37645f; border-radius: 7px; background: #1b2d2c; }
+.audio-processing > p { margin-top: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.audio-options { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.audio-options > label:not(.consent) { color: var(--muted); font-size: 12px; flex: 0 1 260px; }
+.audio-options input[type=number] { display: block; margin-top: 8px; padding: 9px; min-height: 40px; width: 100%; border: 1px solid #3d4d54; background: #171e25; border-radius: 5px; color: var(--ink); }
+#audioProgress { margin: 14px 0 0; }
+#analyzeBtn { margin-top: 14px; }
+#analysisOrigin { margin-bottom: 16px; line-height: 1.6; overflow-wrap: anywhere; }
 .person p, .person b, .review-note, .notice, #exportStatus, #storageStatus, #taskStatus { overflow-wrap: anywhere; }
 @media (max-width: 1100px) {
   .shell { padding-left: 24px; padding-right: 24px; }

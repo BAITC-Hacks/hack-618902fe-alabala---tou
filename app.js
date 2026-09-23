@@ -1,4 +1,4 @@
-/* The analyzer and all transcript data stay in this browser. */
+/* Same-origin audio API; optional text-only rules and review stay in the browser. */
 (() => {
   'use strict';
   const $ = selector => document.querySelector(selector);
@@ -23,12 +23,31 @@
   let saveTimer = null;
   let saved = true;
   let unsavedRecording = false;
+  let apiState = 'checking';
+  let apiConfig = null;
+  let audioRequest = null;
   const draftKey = 'qorit.draft.v1';
   const today = () => {
     const date = new Date();
     return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
   };
   $('#meetingDate').value = today();
+
+  function taskToday() {
+    if (result?.reportTimezone) {
+      try {
+        const parts = new Intl.DateTimeFormat('en-CA', {timeZone: result.reportTimezone, year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date());
+        return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type).value).join('-');
+      } catch { /* Imported unknown timezones fall back to the device calendar. */ }
+    }
+    return today();
+  }
+  function uploadIssue() {
+    if (!selectedAudio) return '';
+    if (!/\.(mp3|wav|flac|ogg|m4a|webm)$/i.test(selectedAudio.name)) return 'Сервер принимает MP3, WAV, FLAC, OGG, M4A и WebM. Преобразуйте другой формат локально.';
+    if (apiConfig && selectedAudio.size > apiConfig.max_upload_bytes) return 'Файл больше лимита сервера (' + Math.floor(apiConfig.max_upload_bytes / 1024 / 1024) + ' МБ).';
+    return '';
+  }
 
   const example = [
     'Данияр Серикович (руководитель): Коллеги, обсудим поставки и запуск.',
@@ -59,12 +78,21 @@
     const unavailable = !result?.utterances.length || sourceDirty || busy || audioNeedsTranscript;
     $$('[data-export]').forEach(button => { button.disabled = unavailable; });
     $('#addTask').disabled = unavailable;
+    $('#copyBtn').disabled = unavailable;
+    $('#undoTask').disabled = busy;
     $('#saveDraft').disabled = busy || (!input.value.trim() && !result);
     $('#loadDemo').disabled = busy || recording;
     $('#importBtn').disabled = busy || recording;
     $('#openDraft').disabled = busy || recording;
     $('#uploadBtn').disabled = busy || recording;
     input.readOnly = busy;
+    $('#processAudioBtn').disabled = busy || recording || apiState !== 'ready' || !selectedAudio || Boolean(uploadIssue());
+    $('#clearAudioBtn').disabled = busy || recording || !selectedAudio;
+    $('#cancelProcessing').hidden = !audioRequest;
+    $('#checkApi').disabled = apiState === 'checking' || busy;
+    $('#diarizeAudio').disabled = busy;
+    $('#numSpeakers').disabled = busy || !$('#diarizeAudio').checked;
+    $('#meetingDate').disabled = busy;
     $('#recordBtn').disabled = busy || recordingPending;
     $$('#taskList input, #taskList select, #taskList textarea, #taskList button, #peopleList input, #peopleList button').forEach(control => {
       if (busy) {
@@ -76,6 +104,90 @@
       }
     });
     if (sourceDirty && result) $('#exportStatus').textContent = 'Исходник изменён. Сначала обработайте его заново; экспорт предыдущего результата заблокирован.';
+  }
+  async function checkBackend() {
+    if (busy) return;
+    apiState = 'checking';
+    $('#apiStatus').textContent = 'Проверяю HTTP API…';
+    updateButton();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      apiConfig = await window.QoritApi.getConfig({signal: controller.signal});
+      apiState = 'ready';
+      if (!$('#diarizeAudio').dataset.userChanged) $('#diarizeAudio').checked = apiConfig.default_diarize;
+      $('#apiStatus').textContent = 'API доступен на ' + window.location.origin + '. Лимит: ' + Math.floor(apiConfig.max_upload_bytes / 1024 / 1024) + ' МБ, ' + Math.floor(apiConfig.max_audio_seconds / 60) + ' мин. Модели проверяются при обработке записи.';
+      if (uploadIssue()) message(uploadIssue(), true);
+    } catch (error) {
+      apiState = 'unavailable';
+      $('#apiStatus').textContent = 'API недоступен. Откройте страницу с адреса запущенного server.py (обычно порт 8000), а не Live Server. ' + (controller.signal.aborted ? 'Время проверки истекло.' : error.message);
+    } finally { clearTimeout(timeout); updateButton(); }
+  }
+  function applyReport(adapted) {
+    result = adapted.result;
+    input.value = adapted.sourceText;
+    importedUtterances = result.utterances;
+    sourceDirty = false;
+    manualEdits = false;
+    audioNeedsTranscript = false;
+    removedTask = null;
+    $('#undoTask').hidden = true;
+    $('#taskFilter').value = 'all';
+    $('#exportStatus').textContent = '';
+    $('#audioProgress').hidden = !audioRequest;
+    if (adapted.metadata.meetingDate) $('#meetingDate').value = adapted.metadata.meetingDate;
+    render();
+    changed();
+    activateTab('protocol');
+  }
+  async function processAudio() {
+    if (busy || recordingPending || recorder?.state === 'recording') return;
+    if (!selectedAudio || apiState !== 'ready') { message('Выберите запись и проверьте доступность API.', true); return; }
+    if (uploadIssue()) { message(uploadIssue(), true); return; }
+    const diarize = $('#diarizeAudio').checked;
+    const speakers = $('#numSpeakers').value.trim();
+    if (diarize && speakers && (!/^\d{1,3}$/.test(speakers) || Number(speakers) < 1 || Number(speakers) > 100)) { message('Число говорящих должно быть целым от 1 до 100.', true); return; }
+    if (!$('#meetingDate').value || !$('#meetingDate').checkValidity()) { message('Укажите действительную дату совещания, чтобы сервер правильно определил относительные сроки.', true); return; }
+    if (manualEdits && !window.confirm('Серверный анализ заменит текущие ручные правки. Сначала сохраните JSON, если они нужны. Продолжить?')) return;
+    busy = true;
+    const controller = new AbortController();
+    audioRequest = controller;
+    let timedOut = false;
+    const started = Date.now();
+    const progress = $('#audioProgress');
+    progress.hidden = false;
+    const showProgress = () => {
+      const seconds = Math.floor((Date.now() - started) / 1000);
+      progress.textContent = 'Отправка и обработка на сервере… ' + Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0') + '. API возвращает результат целиком; отдельные стадии и проценты недоступны.';
+    };
+    showProgress();
+    const ticker = setInterval(showProgress, 1000);
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 30 * 60 * 1000);
+    updateButton();
+    $('#processAudioBtn').textContent = 'Обработка на сервере…';
+    message('Отправляю запись в /process-audio. Не закрывайте страницу.');
+    try {
+      const adapted = await window.QoritApi.processAudio(selectedAudio, {
+        meetingDate: $('#meetingDate').value, diarize, numSpeakers: diarize && speakers ? Number(speakers) : undefined
+      }, {signal: controller.signal});
+      if (controller.signal.aborted) return;
+      applyReport(adapted);
+      message('Получен результат сервера: ' + result.utterances.length + ' реплик, ' + result.tasks.length + ' поручений. Проверьте имена, цитаты и сроки.');
+      progress.textContent = 'Ответ API получен. Правки и экспорт выполняются в браузере; повторное распознавание для экспорта не требуется.';
+    } catch (error) {
+      const reason = controller.signal.aborted
+        ? (timedOut ? 'Время ожидания истекло (30 минут).' : 'Ожидание отменено.') + ' Сервер мог продолжить обработку — отмена в API не предусмотрена. Результат не получен.'
+        : 'Обработка записи не выполнена: ' + error.message;
+      message(reason, true);
+      progress.textContent = reason;
+    } finally {
+      clearInterval(ticker);
+      clearTimeout(timeout);
+      audioRequest = null;
+      busy = false;
+      $('#processAudioBtn').textContent = '✦ Распознать аудио';
+      updateButton();
+    }
   }
   function metadata() { return {title: $('#meetingTitle').value.trim() || 'Протокол совещания', meetingDate: $('#meetingDate').value}; }
   function draft() { return {type: 'qorit-draft', version: 1, sourceText: input.value, sourceDirty: sourceDirty || audioNeedsTranscript, importedUtterances, metadata: metadata(), result}; }
@@ -110,6 +222,7 @@
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
   function restoreDraft(value) {
+    $('#audioProgress').hidden = true;
     input.value = value.sourceText;
     importedUtterances = value.importedUtterances;
     sourceDirty = value.sourceDirty;
@@ -126,7 +239,9 @@
     updateButton();
   }
   function clearResult() {
-    $('#summaryText').textContent = 'После обработки здесь появятся ключевые вопросы и решения.';
+    $('#analysisOrigin').textContent = '';
+    $('#summaryLabel').textContent = 'СВОДКА ПРОТОКОЛА';
+    $('#summaryText').textContent = 'После обработки здесь появятся сводка и предупреждения из результата.';
     ['#summaryHighlights', '#summaryDecisions', '#peopleList'].forEach(id => $(id).replaceChildren());
     ['#highlightsTitle', '#decisionsTitle', '#analysisStats', '#taskDashboard', '#reminderBanner'].forEach(id => { $(id).hidden = true; });
     $('#analysisWarnings').textContent = '';
@@ -144,7 +259,8 @@
   const stateLabels = {done: 'Выполнено', overdue: 'Просрочено', upcoming: 'Срок в ближайшие 3 дня', working: 'В работе', undated: 'Без точной даты'};
   function renderDashboard() {
     if (!result) return;
-    const counts = window.QoritMeeting.summarizeTasks(result.tasks, today());
+    const asOf = taskToday();
+    const counts = window.QoritMeeting.summarizeTasks(result.tasks, asOf);
     const dashboard = $('#taskDashboard');
     dashboard.hidden = false;
     dashboard.replaceChildren();
@@ -154,13 +270,13 @@
       dashboard.append(tile);
     }
     const reminder = $('#reminderText');
-    const reminderText = 'Напоминание: просрочено — ' + counts.overdue + ', срок в ближайшие 3 дня — ' + counts.upcoming + '. По локальной дате устройства: ' + today() + '.';
+    const reminderText = 'Напоминание: просрочено — ' + counts.overdue + ', срок в ближайшие 3 дня — ' + counts.upcoming + '. Дата: ' + asOf + (result.reportTimezone ? ' (' + result.reportTimezone + ')' : ' (устройство)') + '.';
     if (reminder.textContent !== reminderText) reminder.textContent = reminderText;
     $('#reminderBanner').hidden = !counts.overdue && !counts.upcoming;
     $$('.task-detail').forEach(card => {
       const task = result.tasks[Number(card.dataset.index)];
       if (!task) return;
-      const state = window.QoritMeeting.dateState(task, today());
+      const state = window.QoritMeeting.dateState(task, asOf);
       const badge = card.querySelector('.due-badge');
       badge.textContent = stateLabels[state];
       badge.className = 'due-badge state-' + state;
@@ -265,7 +381,7 @@
         const label = element('label', '', title);
         const field = element('input');
         field.type = 'text';
-        field.maxLength = key === 'owner' ? 160 : 1000;
+        field.maxLength = 2500;
         field.value = task[key] || 'Не указан';
         field.setAttribute('aria-label', title + ' поручения ' + (index + 1));
         field.addEventListener('input', () => {
@@ -297,6 +413,11 @@
       statusLabel.append(select);
       fields.append(statusLabel);
       card.append(fields);
+      if (task.urgency || task.direction) {
+        const urgency = {high: 'Высокая', medium: 'Средняя', low: 'Низкая'};
+        const direction = {finance: 'Финансы', legal: 'Юридическое', procurement: 'Закупки', production: 'Производство', safety: 'Безопасность', hr: 'Персонал', it: 'ИТ', general: 'Общее'};
+        card.append(element('p', 'assignment-basis', 'Классификация сервера: срочность — ' + (urgency[task.urgency] || 'не указана') + '; направление — ' + (direction[task.direction] || 'не указано') + '.'));
+      }
       if (task.assignmentBasis) card.append(element('p', 'assignment-basis', 'При извлечении: ' + task.assignmentBasis));
       const confirm = element('button', 'secondary', 'Подтвердить поручение');
       confirm.type = 'button';
@@ -321,6 +442,7 @@
       card.append(confirm);
       const details = element('details', 'task-evidence');
       details.append(element('summary', '', 'Исходная цитата'));
+      if (task.sourceSpeaker) details.append(element('p', 'assignment-basis', 'Говорящий: ' + task.sourceSpeaker + '. Автор реплики не обязательно исполнитель поручения.'));
       details.append(element('blockquote', '', task.source || 'Цитата не найдена.'));
       if (Number.isInteger(task.sourceIndex)) {
         const link = element('button', 'secondary', 'К реплике');
@@ -335,6 +457,10 @@
   }
   function render() {
     $('#summaryText').textContent = result.summary;
+    $('#summaryLabel').textContent = result.method === 'server' ? 'СВОДКА ОТВЕТА СЕРВЕРА' : 'КРАТКОЕ САММАРИ · ПРАВИЛА';
+    $('#analysisOrigin').textContent = result.method === 'server'
+      ? 'Источник поручений: сервер · ' + (result.analysisMethod || 'метод не указан') + '. Исходный отчёт: ' + (result.reportDate || 'дата не указана') + '. Ручные правки сохраняются только в браузере.'
+      : 'Источник: локальные языковые правила в браузере, без запроса к Ollama.';
     for (const [key, listId, titleId] of [
       ['highlights', '#summaryHighlights', '#highlightsTitle'],
       ['decisions', '#summaryDecisions', '#decisionsTitle']
@@ -358,6 +484,7 @@
       node.querySelector('p').textContent = item.text;
       list.append(node);
     });
+    if (!result.utterances.length) list.append(element('p', 'empty-state', 'Сервер не вернул распознанной речи. Проверьте запись; текст не был подставлен автоматически.'));
     $('#peopleList').replaceChildren();
     result.people.forEach(([name, role]) => {
       const card = element('article', 'person');
@@ -378,7 +505,7 @@
           result = window.QoritMeeting.renameSpeaker(result, name, nameInput.value);
           taskChanged();
           render();
-          message('Имя обновлено в репликах и связанных поручениях. Проверьте ответственных. Исходные цитаты сохранены.');
+          message('Имя обновлено в репликах и поручениях с этим именем. Неизвестные исполнители не назначаются по автору реплики — проверьте их отдельно.');
         } catch (error) { feedback.textContent = error.message; }
       });
       card.append(nameLabel, rename, feedback);
@@ -401,7 +528,7 @@
       input.focus();
       return;
     }
-    if (manualEdits && !window.confirm('Повторный анализ заменит ручные правки поручений и имён. Продолжить? При необходимости сначала сохраните JSON.')) return;
+    if ((manualEdits || result?.method === 'server') && !window.confirm('Разбор по правилам заменит серверные поручения и ручные правки. Это отдельный режим без ИИ. Продолжить? При необходимости сначала сохраните JSON.')) return;
     busy = true;
     updateButton();
     analyze.textContent = 'Разбираю расшифровку…';
@@ -423,12 +550,12 @@
       render();
       changed();
       activateTab('protocol');
-      message('Обработано: ' + next.utterances.length + ' реплик, ' + next.tasks.length + ' поручений. Ответственные и сроки доступны на вкладке «Поручения».');
+      message('Разобрано по правилам браузера (без ИИ): ' + next.utterances.length + ' реплик, ' + next.tasks.length + ' поручений. Проверьте вкладку «Поручения».');
     } catch (error) {
       message('Не удалось обработать текст: ' + error.message, true);
     } finally {
       busy = false;
-      analyze.textContent = '✦ Обработать текст';
+      analyze.textContent = 'Разобрать текст по правилам';
       updateButton();
     }
   }
@@ -443,7 +570,7 @@
     if (!file.size) { message('Выбран пустой файл записи.', true); return; }
     selectedAudio = file;
     audioNeedsTranscript = true;
-    sourceDirty = Boolean(result);
+    $('#audioProgress').hidden = true;
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     audioUrl = URL.createObjectURL(file);
     const download = $('#recordDownload');
@@ -453,7 +580,8 @@
     download.textContent = 'Скачать: ' + file.name;
     $('#recordPlayer').src = audioUrl;
     $('#recordPlayer').hidden = false;
-    message('Запись «' + file.name + '» доступна для прослушивания и скачивания. Она НЕ распознана. Импортируйте TXT / JSON настоящего локального STT или вставьте расшифровку.');
+    $('#selectedAudioInfo').textContent = file.name + ' · ' + (file.size / 1024 / 1024).toFixed(2) + ' МБ';
+    message(uploadIssue() || 'Запись выбрана. Нажмите «Распознать аудио», чтобы отправить её на сервер этого приложения.' + (result ? ' До получения ответа ниже остаётся предыдущий протокол.' : ''), Boolean(uploadIssue()));
     updateButton();
   }
   async function toggleRecording() {
@@ -569,7 +697,7 @@
     sourceDirty = Boolean(result);
     updateButton();
     changed();
-    if (result) message('Исходный текст изменён. Нажмите «Обработать текст», чтобы обновить результат.');
+    if (result) message('Текст изменён. Кнопка «Разобрать текст по правилам» создаст новый результат без ИИ. Для серверного анализа повторно отправьте аудио.');
   });
   analyze.addEventListener('click', processText);
   $('#loadDemo').addEventListener('click', () => {
@@ -579,7 +707,7 @@
     sourceDirty = Boolean(result);
     updateButton();
     changed();
-    message('Пример загружен. Нажмите «Обработать текст».');
+    message('Текстовый пример загружен. Для демонстрации без backend нажмите «Разобрать текст по правилам».');
     input.focus();
   });
   $('#copyBtn').addEventListener('click', async () => {
@@ -600,11 +728,33 @@
   });
   $('#recordBtn').addEventListener('click', toggleRecording);
   $('#recordDownload').addEventListener('click', () => { unsavedRecording = false; });
+  $('#processAudioBtn').addEventListener('click', processAudio);
+  $('#checkApi').addEventListener('click', checkBackend);
+  $('#cancelProcessing').addEventListener('click', () => audioRequest?.abort());
+  $('#diarizeAudio').addEventListener('change', () => { $('#diarizeAudio').dataset.userChanged = 'true'; updateButton(); });
+  $('#clearAudioBtn').addEventListener('click', () => {
+    if (busy) return;
+    if (unsavedRecording && !window.confirm('Убрать запись из памяти? Сначала скачайте её, если она нужна.')) return;
+    selectedAudio = null;
+    audioNeedsTranscript = false;
+    unsavedRecording = false;
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    audioUrl = null;
+    $('#recordPlayer').pause();
+    $('#recordPlayer').removeAttribute('src');
+    $('#recordPlayer').hidden = true;
+    $('#recordDownload').hidden = true;
+    $('#recordDownload').removeAttribute('href');
+    $('#selectedAudioInfo').textContent = 'Запись не выбрана. Допустимы MP3, WAV, FLAC, OGG, M4A, WebM.';
+    $('#audioProgress').hidden = true;
+    message('Выбор записи отменён. Текст и предыдущий протокол не изменены.');
+    updateButton();
+  });
   $('.wave').replaceChildren(...Array.from({length: 10}, () => element('span')));
   $$('[data-export]').forEach(button => button.addEventListener('click', () => {
     if (!result || sourceDirty || audioNeedsTranscript || busy) return;
     try {
-      const exportResult = {...result, tasks: result.tasks.map(task => ({...task, status: window.QoritMeeting.dateState(task, today()) === 'overdue' ? 'Просрочено' : task.status}))};
+      const exportResult = {...result, tasks: result.tasks.map(task => ({...task, status: window.QoritMeeting.dateState(task, taskToday()) === 'overdue' ? 'Просрочено' : task.status}))};
       if (button.dataset.export === 'docx') {
         download(window.QoritExport.createDocx(exportResult, metadata()), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'qorit-' + ($('#meetingDate').value || today()) + '.docx');
         $('#exportStatus').textContent = 'DOCX текущего протокола подготовлен к скачиванию. Проверьте загрузки браузера.';
@@ -629,14 +779,25 @@
     busy = true;
     updateButton();
     try {
-      if (file.size > 5 * 1024 * 1024) throw new Error('Файл больше 5 МБ. Разделите расшифровку на части.');
-      const parsed = window.QoritMeeting.parseImport(await file.text(), file.name);
+      if (file.size > 20 * 1024 * 1024) throw new Error('Файл больше 20 МБ. Разделите расшифровку на части.');
+      const contents = await file.text();
+      if (/\.json$/i.test(file.name)) {
+        const report = JSON.parse(contents.replace(/^\uFEFF/, ''));
+        if (report && typeof report === 'object' && Object.hasOwn(report, 'transcript')) {
+          const adapted = window.QoritApi.fromReport(report);
+          if (manualEdits && !window.confirm('Импорт отчёта API заменит текущие ручные правки. Продолжить?')) return;
+          applyReport(adapted);
+          message('Отчёт API импортирован: поручения взяты из файла без повторного анализа по правилам.');
+          return;
+        }
+      }
+      const parsed = window.QoritMeeting.parseImport(contents, file.name);
       input.value = parsed.sourceText;
       importedUtterances = parsed.utterances;
       audioNeedsTranscript = false;
       sourceDirty = Boolean(result);
       changed();
-      message('Расшифровка загружена. Нажмите «Обработать текст».' + (parsed.timestampsApproximate ? ' Таймкоды STT приблизительные.' : ''));
+      message('Расшифровка загружена. Для отдельного текстового режима нажмите «Разобрать текст по правилам».' + (parsed.timestampsApproximate ? ' Таймкоды STT приблизительные.' : ''));
     } catch (error) { message('Импорт не выполнен: ' + error.message, true); }
     finally { busy = false; updateButton(); }
   });
@@ -658,7 +819,15 @@
     render();
     taskChanged();
   });
-  ['#meetingTitle', '#meetingDate'].forEach(id => $(id).addEventListener('input', changed));
+  $('#meetingTitle').addEventListener('input', changed);
+  $('#meetingDate').addEventListener('change', () => {
+    if (result?.method === 'server') {
+      sourceDirty = true;
+      message('Дата совещания изменена. Повторите серверную обработку аудио: сроки прежнего результата рассчитаны от старой даты.', true);
+      updateButton();
+    }
+    changed();
+  });
   $('#persistDraft').addEventListener('change', () => {
     if ($('#persistDraft').checked) persistNow();
     else {
@@ -689,7 +858,7 @@
     busy = true;
     updateButton();
     try {
-      if (file.size > window.QoritStorage.MAX_BYTES) throw new Error('Черновик больше 5 МБ.');
+      if (file.size > window.QoritStorage.MAX_BYTES) throw new Error('Черновик больше допустимого размера (' + Math.floor(window.QoritStorage.MAX_BYTES / 1024 / 1024) + ' МБ).');
       const next = window.QoritStorage.parse(await file.text());
       if ((result || input.value.trim()) && !window.confirm('Открытый черновик заменит текущий текст и правки. Продолжить?')) return;
       restoreDraft(next);
@@ -711,14 +880,16 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) renderDashboard(); else persistNow(); });
   window.addEventListener('beforeunload', event => {
     persistNow();
-    if ((!saved && (result || input.value.trim())) || unsavedRecording || recorder?.state === 'recording') { event.preventDefault(); event.returnValue = ''; }
+    if ((!saved && (result || input.value.trim())) || unsavedRecording || audioRequest || recorder?.state === 'recording') { event.preventDefault(); event.returnValue = ''; }
   });
   updateButton();
+  checkBackend();
   window.addEventListener('pagehide', event => {
     recorder?.stream.getTracks().forEach(track => track.stop());
     stopVisualization();
     // A BFCache return resumes the same document: keep its timer and media URL.
     if (!event.persisted) {
+      audioRequest?.abort();
       clearInterval(remindersTimer);
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     }
