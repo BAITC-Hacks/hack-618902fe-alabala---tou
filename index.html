@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>QORIT — умный протокол</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="styles.css?v=8">
-  <script src="transcript-analyzer.js?v=8" defer></script>
-  <script src="meeting-utils.js?v=8" defer></script>
-  <script src="protocol-storage.js?v=8" defer></script>
-  <script src="protocol-export.js?v=8" defer></script>
-  <script src="app.js?v=8" defer></script>
+  <link rel="stylesheet" href="styles.css?v=9">
+  <script src="transcript-analyzer.js?v=9" defer></script>
+  <script src="meeting-utils.js?v=9" defer></script>
+  <script src="backend-api.js?v=9" defer></script>
+  <script src="protocol-storage.js?v=9" defer></script>
+  <script src="protocol-export.js?v=9" defer></script>
+  <script src="app.js?v=9" defer></script>
 </head>
 <body>
   <aside class="sidebar">
     <div class="brand"><span class="logo">Q</span> QORIT<small>MEETING INTELLIGENCE</small></div>
     <details class="workspace">
       <summary>Рабочее пространство <span class="caret" aria-hidden="true"></span></summary>
-      <div class="workspace-menu"><strong>Основное пространство</strong><small>Обработка текста на этом устройстве</small></div>
+      <div class="workspace-menu"><strong>Основное пространство</strong><small>Аудио → сервер STT / Ollama → протокол</small></div>
     </details>
     <nav class="side-nav" aria-label="Основная навигация">
       <a class="side-active" href="#protocol" data-view="protocol">◉ <span>Протокол встречи</span></a>
@@ -29,14 +30,14 @@
   <main class="shell">
     <header class="topbar">
       <div class="breadcrumbs">Совещания <span>/</span> Протокол встречи</div>
-      <div class="top-right"><div class="secure"><i></i> На этом устройстве</div><span class="user" aria-label="Профиль секретаря">АС</span></div>
+      <div class="top-right"><div class="secure"><i></i> Сервер приложения</div><span class="user" aria-label="Профиль секретаря">АС</span></div>
     </header>
     <section class="hero">
       <div><p class="eyebrow">ПРОТОКОЛ И ПОРУЧЕНИЯ</p><h1>Итоги встречи<br><em>под контролем</em></h1><p class="lead">Расшифровка → ключевые вопросы → поручения.<br>Русский · қазақша · смешанная речь</p></div>
       <div class="meeting-card stopped">
         <div class="live" id="recordStatus" role="status">Микрофон выключен</div>
         <b id="recordTimer">00:00:00</b>
-        <small>Запись микрофона остаётся на этом устройстве</small>
+        <small>После остановки отправьте запись на обработку</small>
         <div class="wave" aria-hidden="true"></div>
         <label class="consent"><input id="recordConsent" type="checkbox"> Я уведомил участников о записи и обработке и получил необходимое согласие</label>
         <button class="stop" id="recordBtn" type="button">● Начать запись</button>
@@ -68,32 +69,47 @@
 
     <section id="protocol" class="tab-content active" role="tabpanel" aria-labelledby="tab-protocol">
       <div class="toolbar">
-        <div><p class="section-label">ПРОТОКОЛ СОВЕЩАНИЯ</p><h2>Разбор расшифровки</h2><p class="muted">Исходный текст сохраняется в поле ниже</p></div>
+        <div><p class="section-label">ПРОТОКОЛ СОВЕЩАНИЯ</p><h2>Обработка совещания</h2><p class="muted">Выберите запись или запишите микрофон</p></div>
         <div class="actions">
           <button class="secondary" id="loadDemo" type="button">↻ Пример встречи</button>
-          <button class="secondary" id="importBtn" type="button">↑ TXT / JSON STT</button>
+          <button class="secondary" id="importBtn" type="button">↑ TXT / JSON</button>
           <input id="transcriptInput" type="file" accept=".txt,.json,text/plain,application/json" hidden>
-          <button class="secondary" id="uploadBtn" type="button">↑ Аудио / видео</button>
-          <input id="fileInput" type="file" accept="audio/*,video/*" hidden>
-          <button class="primary" id="analyzeBtn" type="button" disabled>✦ Обработать текст</button>
+          <button class="primary" id="uploadBtn" type="button">↑ Выбрать аудио</button>
+          <input id="fileInput" type="file" accept=".mp3,.wav,.flac,.ogg,.m4a,.webm" hidden>
         </div>
       </div>
-      <p class="notice">Текст обрабатывается локально по языковым правилам, без LLM. Проверьте поручения по исходным репликам. Серверный маршрут аудио пока возвращает заглушку, поэтому аудио не отправляется. Можно импортировать TXT или JSON, полученный настоящим локальным STT.</p>
+      <p class="notice">Кнопка «Распознать аудио» отправит запись на сервер, с которого открыта эта страница. Он выполняет STT, диаризацию и извлечение поручений через настроенную Ollama. Проверьте, что администратор настроил модели внутри вашего защищённого контура.</p>
+      <div class="backend-status"><p id="apiStatus" class="muted" role="status">Проверяю доступность API…</p><button id="checkApi" class="secondary" type="button">Проверить API</button></div>
       <div class="meeting-fields">
         <label>Тема совещания<input id="meetingTitle" type="text" maxlength="160" value="Протокол совещания"></label>
         <label>Дата совещания<input id="meetingDate" type="date"></label>
       </div>
+      <div class="audio-processing">
+        <p id="selectedAudioInfo">Запись не выбрана. Допустимы MP3, WAV, FLAC, OGG, M4A, WebM.</p>
+        <div class="audio-options">
+          <label class="consent"><input id="diarizeAudio" type="checkbox" checked> Различать говорящих (NeMo)</label>
+          <label>Число говорящих (необязательно)<input id="numSpeakers" type="number" min="1" max="100" step="1" placeholder="Автоматически"></label>
+        </div>
+        <div class="actions">
+          <button id="processAudioBtn" class="primary" type="button" disabled>✦ Распознать аудио</button>
+          <button id="clearAudioBtn" class="secondary" type="button" disabled>Отменить выбор</button>
+          <button id="cancelProcessing" class="secondary" type="button" hidden>Прекратить ожидание</button>
+        </div>
+        <p id="audioProgress" class="muted" role="status" hidden></p>
+      </div>
       <div class="transcript-editor">
         <label for="manualTranscript">Исходная расшифровка</label>
-        <textarea id="manualTranscript" class="manual-transcript" maxlength="200000" placeholder="Вставьте текст совещания. Например:&#10;Данияр Серикович: Ерлан, подготовь претензию до пятницы.&#10;Ерлан: Хорошо, подготовлю." aria-describedby="transcriptHelp"></textarea>
-        <p id="transcriptHelp" class="muted">Сохраняйте имена перед репликами. Если их нет, ответственный будет отмечен для уточнения. До 200 000 символов.</p>
+        <textarea id="manualTranscript" class="manual-transcript" maxlength="2000000" placeholder="Здесь появится расшифровка с сервера. Или вставьте готовый текст для отдельного разбора по правилам." aria-describedby="transcriptHelp"></textarea>
+        <p id="transcriptHelp" class="muted">Сервер принимает аудио, а не текст. Кнопка ниже — отдельный режим без ИИ: языковые правила в браузере, до 200 000 символов. Ответы API принимаются до 2 000 000 символов без сокращения.</p>
+        <button class="secondary" id="analyzeBtn" type="button" disabled>Разобрать текст по правилам</button>
       </div>
-      <p id="analysisStatus" class="analysis-status" role="status" aria-live="polite">Вставьте расшифровку или откройте пример встречи.</p>
+      <p id="analysisStatus" class="analysis-status" role="status" aria-live="polite">Выберите аудио и нажмите «Распознать аудио».</p>
+      <p id="analysisOrigin" class="muted"></p>
       <div id="analysisStats" class="analysis-stats" hidden></div>
       <div class="grid">
         <article class="summary">
-          <p class="section-label">КРАТКОЕ САММАРИ</p>
-          <div id="summaryText">После обработки здесь появятся ключевые вопросы и решения.</div>
+          <p class="section-label" id="summaryLabel">СВОДКА ПРОТОКОЛА</p>
+          <div id="summaryText">После обработки здесь появятся сводка и предупреждения из результата.</div>
           <h3 id="highlightsTitle" hidden>Ключевые вопросы</h3>
           <ul id="summaryHighlights"></ul>
           <h3 id="decisionsTitle" hidden>Решения из расшифровки</h3>
@@ -102,7 +118,7 @@
         </article>
         <article class="transcript">
           <div class="card-title">
-            <div><p class="section-label">РЕПЛИКИ УЧАСТНИКОВ</p><span>Имена определяются по тексту</span></div>
+            <div><p class="section-label">РЕПЛИКИ УЧАСТНИКОВ</p><span>Метки голосов требуют привязки к именам</span></div>
             <button class="secondary" id="copyBtn" type="button" disabled>Копировать</button>
           </div>
           <div id="transcriptList"><p class="empty-state">Расшифровка ещё не обработана.</p></div>
@@ -114,7 +130,7 @@
         <div><p class="section-label">КОНТРОЛЬ ИСПОЛНЕНИЯ</p><h2>Поручения</h2><p class="muted">Сверьте цитату, уточните ответственного и срок</p></div>
         <div class="actions"><button class="secondary" id="addTask" type="button" disabled>+ Поручение</button><button class="secondary" data-export="docx" type="button" disabled>↓ DOCX</button><button class="primary" data-export="pdf" type="button" disabled>Печать / PDF</button></div>
       </div>
-      <p class="muted">Для напоминаний укажите точную дату. Относительные сроки («до пятницы», «за неделю») автоматически в дату не переводятся. Напоминания работают в открытой вкладке, без рассылки.</p>
+      <p class="muted">Для серверного анализа календарные сроки приходят из API; проверьте их относительно даты совещания. В режиме языковых правил дату нужно указать вручную. Правки хранятся в браузере; напоминания работают в открытой вкладке, без рассылки.</p>
       <div id="taskDashboard" class="analysis-stats task-dashboard" hidden></div>
       <label class="task-filter">Показать<select id="taskFilter"><option value="all">Все поручения</option><option value="overdue">Просрочено</option><option value="upcoming">Срок в ближайшие 3 дня</option><option value="working">В работе</option><option value="done">Выполнено</option><option value="undated">Без точной даты</option><option value="review">Требуют проверки</option></select></label>
       <p id="taskStatus" class="muted" role="status"></p>

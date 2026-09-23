@@ -5,7 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 const assets = new Map([
   ['/', ['index.html', 'text/html']], ['/index.html', ['index.html', 'text/html']],
-  ...['app.js', 'transcript-analyzer.js', 'meeting-utils.js', 'protocol-export.js', 'protocol-storage.js'].map(name => ['/' + name, [name, 'text/javascript']]),
+  ...['app.js', 'transcript-analyzer.js', 'meeting-utils.js', 'backend-api.js', 'protocol-export.js', 'protocol-storage.js'].map(name => ['/' + name, [name, 'text/javascript']]),
   ['/styles.css', ['styles.css', 'text/css']]
 ]);
 const port = Number(process.env.FRONTEND_PORT || 5500);
@@ -35,4 +35,4 @@ server.on('error', error => {
   console.error(error.code === 'EADDRINUSE' ? `Порт ${port} занят. Закройте Live Server или задайте FRONTEND_PORT=5501.` : error.message);
   process.exitCode = 1;
 });
-server.listen(port, host, () => console.log(`QORIT frontend: http://${host}:${port} (backend unchanged)`));
+server.listen(port, host, () => console.log(`QORIT frontend: http://${host}:${port} (только текстовый режим; для аудио запускайте python server.py)`));

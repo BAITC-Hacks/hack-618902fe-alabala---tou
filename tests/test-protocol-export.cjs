@@ -182,3 +182,32 @@ test('source-only protocol is honest about missing tasks and participants', () =
     assert.ok(!output.includes('Самрук'));
   }
 });
+
+test('server reports retain analysis origin, classification, evidence and original voice IDs in both exports', () => {
+  const result = fixture();
+  Object.assign(result, {method: 'server', analysisMethod: 'ollama:local-model', reportDate: '2026-09-23', reportTimezone: 'Asia/Almaty', summary: ''});
+  Object.assign(result.tasks[0], {urgency: 'high', direction: 'legal', serverStatus: 'overdue', status: 'Выполнено', sourceSpeaker: 'SPEAKER_00', originalOwner: 'SPEAKER_01'});
+  result.utterances[0].originalSpeaker = 'SPEAKER_00';
+  const before = structuredClone(result);
+  for (const output of [unzip(createDocx(result)).get('word/document.xml'), createPrintHtml(result)]) {
+    for (const expected of ['Источник анализа: сервер.', 'ollama:local-model', 'Исходный отчёт: 2026-09-23',
+      'Asia/Almaty', 'Сводка ответа сервера', 'Развёрнутое саммари не получено от backend.',
+      'Срочность по оценке сервера: Высокая', 'Направление: Юридическое', 'Статус: Выполнено',
+      'Статус при серверной обработке: Просрочено (до ручных правок)',
+      'Говорящий в исходной цитате: SPEAKER_00. Это не обязательно ответственный.',
+      'исходная метка: SPEAKER_00', 'Исходное обозначение ответственного: SPEAKER_01']) assert.ok(output.includes(expected), expected);
+    assert.ok(!output.includes('обработана локальными языковыми правилами'));
+  }
+  assert.deepEqual(result, before);
+});
+
+test('server metadata remains escaped text, never executable markup', () => {
+  const result = fixture(), attack = '<script>alert("origin")</script>';
+  Object.assign(result, {method: 'server', analysisMethod: attack, reportDate: attack, reportTimezone: attack});
+  Object.assign(result.tasks[0], {sourceSpeaker: attack, originalOwner: attack});
+  result.utterances[0].originalSpeaker = attack;
+  for (const output of [unzip(createDocx(result)).get('word/document.xml'), createPrintHtml(result)]) {
+    assert.ok(output.includes('&lt;script&gt;alert(&quot;origin&quot;)&lt;/script&gt;'));
+    assert.ok(!output.includes('<script>'));
+  }
+});

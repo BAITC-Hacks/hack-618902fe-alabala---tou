@@ -12,6 +12,7 @@ RUN python -m pip install --no-cache-dir -r requirements-nemo.txt
 
 COPY local_models.py speaker_diarization.py stt_kazakh_russian.py test.py ./
 COPY server.py meeting_analysis.py report_exports.py ./
+COPY index.html styles.css app.js backend-api.js meeting-utils.js transcript-analyzer.js protocol-storage.js protocol-export.js ./
 
 ENV PYTHONUNBUFFERED=1 \
     LOCAL_MODELS_DIR=/app/models \

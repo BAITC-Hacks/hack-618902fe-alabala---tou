@@ -1,4 +1,4 @@
-"""HTTP API: audio -> local STT -> local LLM -> JSON / PDF / DOCX."""
+"""Same-origin frontend and HTTP API: audio -> local STT -> Ollama -> reports."""
 
 from __future__ import annotations
 
@@ -22,12 +22,23 @@ from report_exports import render_docx, render_pdf
 
 
 BASE_DIR = Path(__file__).resolve().parent
+# Explicit assets only: the repository also contains .env, models and recordings.
+# Never expose BASE_DIR through Flask's unrestricted static-directory route.
+FRONTEND_ASSETS = {
+    "styles.css": "text/css",
+    "app.js": "application/javascript",
+    "transcript-analyzer.js": "application/javascript",
+    "meeting-utils.js": "application/javascript",
+    "protocol-storage.js": "application/javascript",
+    "protocol-export.js": "application/javascript",
+    "backend-api.js": "application/javascript",
+}
 AUDIO_DEMUXERS = {
     ".mp3": "mp3", ".wav": "wav", ".flac": "flac", ".ogg": "ogg",
     ".m4a": "mov", ".webm": "matroska",
 }
 ALLOWED_EXTENSIONS = set(AUDIO_DEMUXERS)
-# Serialize the STT/LLM pipeline. Use one server process, not multiple workers.
+# STT and Ollama share one GPU. Use one server process, not multiple workers.
 _PIPELINE_LOCK = Lock()
 
 
@@ -139,9 +150,9 @@ def _process_upload() -> dict:
             analysis = analyze_meeting(
                 transcript, meeting_date=meeting_date, as_of=as_of,
                 provider=current_app.config["LLM_PROVIDER"],
-                llama_url=current_app.config["LLAMA_URL"],
-                llama_model=current_app.config["LLAMA_MODEL"],
-                timeout=current_app.config["LLAMA_TIMEOUT"],
+                ollama_url=current_app.config["OLLAMA_URL"],
+                ollama_model=current_app.config["OLLAMA_MODEL"],
+                timeout=current_app.config["OLLAMA_TIMEOUT"],
             )
         finally:
             _PIPELINE_LOCK.release()
@@ -166,19 +177,49 @@ def create_app(config: dict | None = None) -> Flask:
         FFMPEG_BINARY=os.getenv("FFMPEG_BINARY", "ffmpeg"),
         APP_TIMEZONE=os.getenv("APP_TIMEZONE", "Asia/Qyzylorda"),
         STT_DIARIZE=os.getenv("STT_DIARIZE", "true"),
-        LLM_PROVIDER=os.getenv("LLM_PROVIDER", "local_llama"),
-        LLAMA_URL=os.getenv("LLAMA_URL", "http://127.0.0.1:8080"),
-        LLAMA_MODEL=os.getenv("LLAMA_MODEL", "gemma-4-12b-it-Q6_K"),
-        LLAMA_TIMEOUT=float(os.getenv("LLAMA_TIMEOUT", "600")),
+        LLM_PROVIDER=os.getenv("LLM_PROVIDER", "ollama"),
+        OLLAMA_URL=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+        OLLAMA_MODEL=os.getenv("OLLAMA_MODEL", "Gemma-4-12B-it-Q6_K:latest"),
+        OLLAMA_TIMEOUT=float(os.getenv("OLLAMA_TIMEOUT", "180")),
     )
     if config:
         app.config.update(config)
+    if app.config["LLM_PROVIDER"] == "local_llama":
+        app.config["LLM_PROVIDER"] = "ollama"
     ZoneInfo(app.config["APP_TIMEZONE"])
 
     @app.after_request
     def prevent_caching(response):
         response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         return response
+
+    @app.get("/")
+    @app.get("/index.html")
+    def frontend_index():
+        return send_file(BASE_DIR / "index.html", mimetype="text/html")
+
+    def frontend_asset(filename):
+        return send_file(BASE_DIR / filename, mimetype=FRONTEND_ASSETS[filename])
+
+    for filename in FRONTEND_ASSETS:
+        app.add_url_rule(
+            f"/{filename}", endpoint=f"frontend_asset_{filename}",
+            view_func=frontend_asset, defaults={"filename": filename}, methods=["GET"],
+        )
+
+    @app.get("/favicon.ico")
+    def frontend_favicon():
+        return "", 204
+
+    @app.get("/api/config")
+    def frontend_config():
+        # Public browser contract, not a dump of app.config or the environment.
+        return jsonify(
+            max_upload_bytes=current_app.config["MAX_CONTENT_LENGTH"],
+            max_audio_seconds=current_app.config["MAX_AUDIO_SECONDS"],
+            default_diarize=str(current_app.config["STT_DIARIZE"]).lower() in {"true", "1"},
+        )
 
     @app.errorhandler(ProcessingError)
     def processing_error(exc):

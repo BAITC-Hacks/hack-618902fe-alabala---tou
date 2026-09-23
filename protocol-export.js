@@ -34,6 +34,29 @@
   const present = value => text(value).trim();
   const fallback = (value, otherwise) => present(value) || otherwise;
 
+  function analysisOrigin(result) {
+    if (result.method === 'local-rules') return 'Расшифровка обработана локальными языковыми правилами. Это не результат ИИ-диаризации.';
+    if (result.method !== 'server') return 'Проверьте расшифровку, участников, поручения и сроки перед утверждением.';
+    return 'Источник анализа: сервер.' +
+      (present(result.analysisMethod) ? ` Метод: ${present(result.analysisMethod)}.` : ' Метод не указан.') +
+      (present(result.reportDate) ? ` Исходный отчёт: ${present(result.reportDate)}.` : '') +
+      (present(result.reportTimezone) ? ` Часовой пояс: ${present(result.reportTimezone)}.` : '') +
+      ' Экспорт содержит текущие ручные правки. Метки голосов не устанавливают личность человека; проверьте имена и поручения.';
+  }
+
+  function taskMetadata(task) {
+    const urgency = {high: 'Высокая', medium: 'Средняя', low: 'Низкая'};
+    const direction = {finance: 'Финансы', legal: 'Юридическое', procurement: 'Закупки', production: 'Производство', safety: 'Безопасность', hr: 'Персонал', it: 'ИТ', general: 'Общее'};
+    const status = {in_progress: 'В работе', overdue: 'Просрочено', completed: 'Выполнено'};
+    const values = [];
+    if (Object.hasOwn(urgency, task.urgency)) values.push(`Срочность по оценке сервера: ${urgency[task.urgency]}.`);
+    if (Object.hasOwn(direction, task.direction)) values.push(`Направление: ${direction[task.direction]}.`);
+    if (Object.hasOwn(status, task.serverStatus)) values.push(`Статус при серверной обработке: ${status[task.serverStatus]} (до ручных правок).`);
+    if (task.sourceSpeaker) values.push(`Говорящий в исходной цитате: ${task.sourceSpeaker}. Это не обязательно ответственный.`);
+    if (task.originalOwner) values.push(`Исходное обозначение ответственного: ${task.originalOwner}. Имя изменено вручную.`);
+    return values;
+  }
+
   function protocol(result, metadata) {
     if (!result || !list(result.utterances).some(item => item && present(item.text))) {
       throw new Error('Сначала обработайте расшифровку совещания. Пустой протокол нельзя экспортировать.');
@@ -42,7 +65,8 @@
     return {
       title: fallback(meta.title, 'Протокол совещания'),
       meetingDate: present(meta.meetingDate),
-      summary: fallback(result.summary, 'Саммари не сформировано.'),
+      summary: fallback(result.summary, result.method === 'server' ? 'Развёрнутое саммари не получено от backend.' : 'Саммари не сформировано.'),
+      summaryHeading: result.method === 'server' ? 'Сводка ответа сервера' : 'Краткое саммари',
       highlights: list(result.highlights).map(text).filter(present),
       decisions: list(result.decisions).map(text).filter(present),
       warnings: list(result.warnings).map(text).filter(present),
@@ -53,14 +77,15 @@
         id: present(task.id), title: fallback(task.title, 'Суть поручения не указана'),
         owner: fallback(task.owner, 'Не указан'), due: fallback(task.due, 'Не указан'),
         dueDate: present(task.dueDate), status: fallback(task.status, 'В работе'),
-        needsReview: task.needsReview !== false, reviewed: task.reviewed === true, source: present(task.source)
+        needsReview: task.needsReview !== false, reviewed: task.reviewed === true, source: present(task.source),
+        urgency: present(task.urgency), direction: present(task.direction), serverStatus: present(task.serverStatus),
+        sourceSpeaker: present(task.sourceSpeaker), originalOwner: present(task.originalOwner)
       })),
       utterances: list(result.utterances).filter(item => item && present(item.text)).map(item => ({
-        time: fallback(item.time, '—'), speaker: fallback(item.speaker, 'Не указан'), text: text(item.text)
+        time: fallback(item.time, '—'), speaker: fallback(item.speaker, 'Не указан') +
+          (present(item.originalSpeaker) ? ` (исходная метка: ${present(item.originalSpeaker)})` : ''), text: text(item.text)
       })),
-      method: result.method === 'local-rules' ?
-        'Расшифровка обработана локальными языковыми правилами. Это не результат ИИ-диаризации.' :
-        'Проверьте расшифровку, участников, поручения и сроки перед утверждением.'
+      method: analysisOrigin(result)
     };
   }
 
@@ -81,7 +106,7 @@
     if (data.meetingDate) blocks.push(paragraph(`Дата совещания: ${data.meetingDate}`, 'Subtitle'));
     blocks.push(paragraph('ЧЕРНОВИК — требует проверки и утверждения', 'Draft'));
     blocks.push(paragraph(data.method, 'Small'));
-    blocks.push(paragraph('Краткое саммари', 'Heading1'), paragraph(data.summary));
+    blocks.push(paragraph(data.summaryHeading, 'Heading1'), paragraph(data.summary));
     for (const [title, items] of [['Основные факты', data.highlights], ['Решения', data.decisions]]) {
       if (!items.length) continue;
       blocks.push(paragraph(title, 'Heading1'));
@@ -100,6 +125,7 @@
       blocks.push(paragraph(`Срок из расшифровки: ${task.due}`));
       if (task.dueDate) blocks.push(paragraph(`Календарная дата: ${task.dueDate}`));
       blocks.push(paragraph(`Статус: ${task.status}. Проверка: ${reviewLabel(task)}.`));
+      taskMetadata(task).forEach(value => blocks.push(paragraph(value, 'Small')));
       if (task.source) blocks.push(paragraph(`Исходная цитата: ${task.source}`, 'Quote'));
     });
     blocks.push(paragraph('Участники', 'Heading1'));
@@ -242,13 +268,14 @@
       '</style></head><body><button id="print-protocol" type="button" class="print-action">Печать / сохранить PDF</button>' +
       `<main><h1>${escape(data.title)}</h1>${data.meetingDate ? p(`Дата совещания: ${data.meetingDate}`) : ''}` +
       p('ЧЕРНОВИК — требует проверки и утверждения', 'draft') + p(data.method, 'small') +
-      `<section><h2>Краткое саммари</h2>${p(data.summary)}</section>` +
+      `<section><h2>${escape(data.summaryHeading)}</h2>${p(data.summary)}</section>` +
       section('Основные факты', data.highlights) + section('Решения', data.decisions) + section('Замечания к обработке', data.warnings) +
       '<section><h2>Поручения</h2>' + (data.tasks.length ? data.tasks.map((task, index) =>
         `<article class="task"><h3>${index + 1}. ${escape(task.title)}</h3>` +
         (task.id ? p(`Идентификатор: ${task.id}`, 'small') : '') + p(`Ответственный: ${task.owner}`) +
         p(`Срок из расшифровки: ${task.due}`) + (task.dueDate ? p(`Календарная дата: ${task.dueDate}`) : '') +
         p(`Статус: ${task.status}. Проверка: ${reviewLabel(task)}.`) +
+        taskMetadata(task).map(value => p(value, 'small')).join('') +
         (task.source ? `<blockquote>${p(`Исходная цитата: ${task.source}`, 'quote')}</blockquote>` : '') + '</article>'
       ).join('') : p('Поручения не выделены. Проверьте расшифровку.')) + '</section>' +
       `<section><h2>Участники</h2>${data.people.length ? data.people.map(person => p(`${person.name}${person.role ? ` — ${person.role}` : ''}`)).join('') : p('Участники не определены.')}</section>` +

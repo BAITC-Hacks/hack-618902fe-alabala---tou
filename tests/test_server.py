@@ -21,7 +21,7 @@ import server
 
 TRANSCRIPT = {"text": "Айгуль, подготовьте отчёт до завтра", "duration": 2, "segments": []}
 ANALYSIS = {
-    "analysis_method": "local_llama:gemma-4-12b-it-Q6_K", "warnings": [],
+    "analysis_method": "ollama:test", "warnings": [],
     "tasks": [{"id": "task-0001", "title": "Подготовить отчёт", "assignee": "Айгуль",
                "deadline": "2026-09-24", "deadline_text": "до завтра", "status": "in_progress",
                "urgency": "high", "direction": "finance", "source_quote": TRANSCRIPT["text"],
@@ -101,27 +101,68 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.transcribe_audio.call_count, 3)
         self.assertEqual(self.analyze_meeting.call_count, 3)
 
-    def test_all_routes_forward_configured_llama_connection(self):
-        self.app.config.update(LLM_PROVIDER="local_llama", LLAMA_URL="http://localhost:9000/v1",
-                               LLAMA_MODEL="custom-Q6_K", LLAMA_TIMEOUT=73)
-        for route in ROUTES:
-            with self.subTest(route=route):
-                self.assertEqual(self.post(route).status_code, 200)
-                options = self.analyze_meeting.call_args.kwargs
-                self.assertEqual(set(options), {"meeting_date", "as_of", "provider", "llama_url",
-                                               "llama_model", "timeout"})
-                self.assertEqual(options["provider"], "local_llama")
-                self.assertEqual(options["llama_url"], "http://localhost:9000/v1")
-                self.assertEqual(options["llama_model"], "custom-Q6_K")
-                self.assertEqual(options["timeout"], 73)
-
-    def test_only_three_application_routes(self):
-        self.assertEqual({rule.rule for rule in self.app.url_map.iter_rules()}, set(ROUTES))
+    def test_api_routes_remain_post_only(self):
+        frontend_routes = {"/", "/index.html", "/favicon.ico", "/api/config"}
+        frontend_routes.update(f"/{filename}" for filename in server.FRONTEND_ASSETS)
+        self.assertEqual({rule.rule for rule in self.app.url_map.iter_rules()}, set(ROUTES) | frontend_routes)
         for route in ROUTES:
             self.assertEqual(self.client.get(route).status_code, 405)
             response = self.client.post(route)
             self.assertEqual(response.status_code, 400)
             self.assertIn("error", response.get_json())
+        self.transcribe_audio.assert_not_called()
+
+    def test_frontend_and_assets_are_served_on_api_origin(self):
+        for route in ("/", "/index.html"):
+            with self.subTest(route=route):
+                response = self.client.get(route)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.mimetype, "text/html")
+                self.assertEqual(response.data, (server.BASE_DIR / "index.html").read_bytes())
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                response.close()
+        for filename, mimetype in server.FRONTEND_ASSETS.items():
+            with self.subTest(filename=filename):
+                response = self.client.get(f"/{filename}?v=latest")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.mimetype, mimetype)
+                self.assertEqual(response.data, (server.BASE_DIR / filename).read_bytes())
+                self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                response.close()
+        self.assertEqual(self.client.get("/favicon.ico").status_code, 204)
+        self.transcribe_audio.assert_not_called()
+        self.analyze_meeting.assert_not_called()
+
+    def test_frontend_does_not_expose_private_repository_files(self):
+        routes = (
+            "/.env", "/.env.example", "/.git/config", "/server.py", "/README.md",
+            "/tests/test_server.py", "/models/model.bin", "/media/meeting.mp3",
+            "/results/report.json", "/static/.env", "/static/../.env",
+            "/%2eenv", "/%2egit/config", "/%2e%2e/.env", "/%2e%2e%2f.env",
+            "/app.js/../.env", "/styles.css%2f..%2f.env", "/%252e%252e%252f.env",
+        )
+        for route in routes:
+            with self.subTest(route=route):
+                response = self.client.get(route)
+                self.assertEqual(response.status_code, 404)
+                self.assertIn("error", response.get_json())
+        for route in ("/", "/index.html", "/app.js", "/api/config"):
+            self.assertEqual(self.client.post(route).status_code, 405)
+
+    def test_public_config_contains_only_limits_and_diarization_default(self):
+        self.app.config.update(MAX_CONTENT_LENGTH=123456, MAX_AUDIO_SECONDS=456,
+                               STT_DIARIZE="false", OLLAMA_URL="http://secret-internal-host:11434")
+        response = self.client.get("/api/config")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {
+            "max_upload_bytes": 123456, "max_audio_seconds": 456, "default_diarize": False,
+        })
+        self.assertNotIn("secret-internal-host", response.get_data(as_text=True))
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        for value in (True, "true", "1"):
+            self.app.config["STT_DIARIZE"] = value
+            self.assertIs(self.client.get("/api/config").get_json()["default_diarize"], True)
         self.transcribe_audio.assert_not_called()
 
     def test_invalid_fields_fail_before_inference(self):
@@ -163,10 +204,10 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(all(not path.exists() for path in self.paths))
 
     def test_analysis_failure_is_json_for_download_route(self):
-        self.analyze_meeting.side_effect = server.AnalysisError("llama.cpp недоступна")
+        self.analyze_meeting.side_effect = server.AnalysisError("Ollama недоступна")
         response = self.post(ROUTES[1])
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.get_json(), {"error": "llama.cpp недоступна"})
+        self.assertEqual(response.get_json(), {"error": "Ollama недоступна"})
 
     def test_missing_meeting_date_is_explicit_and_diarization_optional(self):
         response = self.post(meeting_date="", diarize="false")
@@ -182,14 +223,6 @@ class ServerTests(unittest.TestCase):
 
 
 class AdapterTests(unittest.TestCase):
-    def test_default_llama_configuration_uses_q6_k(self):
-        with patch.object(server, "load_dotenv"), patch.dict(server.os.environ, {}, clear=True):
-            app = server.create_app({"TESTING": True})
-        self.assertEqual(app.config["LLM_PROVIDER"], "local_llama")
-        self.assertEqual(app.config["LLAMA_URL"], "http://127.0.0.1:8080")
-        self.assertEqual(app.config["LLAMA_MODEL"], "gemma-4-12b-it-Q6_K")
-        self.assertEqual(app.config["LLAMA_TIMEOUT"], 600)
-
     def test_speech_adapter_releases_model_after_success_and_failure(self):
         fake = SimpleNamespace(transcribe_diarized=Mock(return_value=TRANSCRIPT),
                                transcribe_with_timestamps=Mock(return_value=TRANSCRIPT), release_models=Mock())
