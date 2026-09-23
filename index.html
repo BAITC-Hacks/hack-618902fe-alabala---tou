@@ -1,1 +1,101 @@
-<!doctype html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>QORIT — умный протокол</title><link rel="stylesheet" href="styles.css"></head><body><aside class="sidebar"><div class="brand"><span class="logo">Q</span> QORIT<small>MEETING INTELLIGENCE</small></div><div class="workspace">⌄ &nbsp; Рабочее пространство</div><nav class="side-nav"><a class="side-active">◉ <span>Активная встреча</span></a><a>▣ <span>Мои совещания</span></a><a>✓ <span>Поручения</span><b>3</b></a><a>◫ <span>Архив протоколов</span></a><a>⌁ <span>Интеграции</span></a></nav><div class="side-bottom"><a>◌ <span>Настройки</span></a><a>ⓘ <span>О системе</span></a></div></aside><main class="shell"><header class="topbar"><div class="breadcrumbs">Совещания <span>/</span> Еженедельный статус</div><div class="top-right"><div class="secure"><i></i> Локальный контур</div><button class="user">АС</button></div></header><section class="hero"><div><p class="eyebrow">ЗАПИСЬ СОВЕЩАНИЯ · В РЕАЛЬНОМ ВРЕМЕНИ</p><h1>Еженедельный<br><em>статус проекта</em></h1><p class="lead">Транскрипт, решения и поручения — автоматически.<br>Русский · қазақша · смешанная речь</p></div><div class="meeting-card"><div class="live">● LIVE · запись идёт</div><b>00:34:18</b><small>4 участника · качество связи: высокое</small><div class="wave">▁▅▃▇▂▆▄▇▂▅</div><button class="stop" id="recordBtn">■ Остановить запись</button></div></section><nav class="tabs"><button class="active" data-tab="protocol">▤ &nbsp; Протокол</button><button data-tab="tasks">✓ &nbsp; Поручения <span id="taskCount">3</span></button><button data-tab="people">◉ &nbsp; Участники</button></nav><section id="protocol" class="tab-content active"><div class="toolbar"><div><p class="section-label">ПРОТОКОЛ СОВЕЩАНИЯ</p><h2>Еженедельный статус</h2><p class="muted">23 сентября 2026 · 10:00–10:34</p></div><div class="actions"><button class="secondary" id="loadDemo">↻ Демо-данные</button><button class="secondary" id="uploadBtn">↑ Аудио / видео</button><input id="fileInput" type="file" accept="audio/*,video/*" hidden><button class="primary" id="analyzeBtn">✦ Обработать</button></div></div><div class="notice">🔒 <b>Запись и транскрибация ведутся с согласия участников.</b> Все модели запускаются внутри защищённого контура.</div><div class="grid"><article class="summary"><p class="section-label">КРАТКОЕ САММАРИ</p><div id="summaryText"></div></article><article class="transcript"><div class="card-title"><div><p class="section-label">ТРАНСКРИПТ</p><span>RU · KZ · MIX</span></div><button class="secondary" id="copyBtn">Копировать</button></div><div id="transcriptList"></div></article></div></section><section id="tasks" class="tab-content"><div class="toolbar"><div><p class="section-label">КОНТРОЛЬ ИСПОЛНЕНИЯ</p><h2>Поручения</h2></div><div class="actions"><button class="secondary" data-export="docx">↓ DOCX</button><button class="primary" data-export="pdf">↓ PDF</button></div></div><div id="taskList" class="task-list"></div></section><section id="people" class="tab-content"><p class="section-label">ДИАРИЗАЦИЯ</p><h2>Участники совещания</h2><div id="peopleList" class="people-list"></div></section></main><template id="utterance"><div class="utterance"><time></time><i></i><div><b></b><p></p></div></div></template><script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QORIT — умный протокол</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css?v=7">
+  <script src="transcript-analyzer.js?v=7" defer></script>
+  <script src="app.js?v=7" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">Q</span> QORIT<small>MEETING INTELLIGENCE</small></div>
+    <details class="workspace">
+      <summary>Рабочее пространство <span class="caret" aria-hidden="true"></span></summary>
+      <div class="workspace-menu"><strong>Основное пространство</strong><small>Обработка текста на этом устройстве</small></div>
+    </details>
+    <nav class="side-nav" aria-label="Основная навигация">
+      <a class="side-active" href="#protocol" data-view="protocol">◉ <span>Протокол встречи</span></a>
+      <a href="#tasks" data-view="tasks">✓ <span>Поручения</span><b id="sideTaskCount">0</b></a>
+      <a href="#people" data-view="people">◫ <span>Участники</span></a>
+    </nav>
+    <div class="side-bottom"><p>QORIT · локальная обработка</p></div>
+  </aside>
+  <main class="shell">
+    <header class="topbar">
+      <div class="breadcrumbs">Совещания <span>/</span> Протокол встречи</div>
+      <div class="top-right"><div class="secure"><i></i> На этом устройстве</div><span class="user" aria-label="Профиль секретаря">АС</span></div>
+    </header>
+    <section class="hero">
+      <div><p class="eyebrow">ПРОТОКОЛ И ПОРУЧЕНИЯ</p><h1>Итоги встречи<br><em>под контролем</em></h1><p class="lead">Расшифровка → ключевые вопросы → поручения.<br>Русский · қазақша · смешанная речь</p></div>
+      <div class="meeting-card stopped">
+        <div class="live" id="recordStatus" role="status">Микрофон выключен</div>
+        <b id="recordTimer">00:00:00</b>
+        <small>Запись начинается после разрешения микрофона</small>
+        <div class="wave" aria-hidden="true"></div>
+        <button class="stop" id="recordBtn" type="button">● Начать запись</button>
+        <a class="record-download" id="recordDownload" hidden>Скачать запись</a>
+      </div>
+    </section>
+    <nav class="tabs" role="tablist" aria-label="Результаты встречи">
+      <button class="active" id="tab-protocol" data-tab="protocol" role="tab" aria-controls="protocol" aria-selected="true">▤ &nbsp; Протокол</button>
+      <button id="tab-tasks" data-tab="tasks" role="tab" aria-controls="tasks" aria-selected="false" tabindex="-1">✓ &nbsp; Поручения <span id="taskCount">0</span></button>
+      <button id="tab-people" data-tab="people" role="tab" aria-controls="people" aria-selected="false" tabindex="-1">◉ &nbsp; Участники</button>
+    </nav>
+
+    <section id="protocol" class="tab-content active" role="tabpanel" aria-labelledby="tab-protocol">
+      <div class="toolbar">
+        <div><p class="section-label">ПРОТОКОЛ СОВЕЩАНИЯ</p><h2>Разбор расшифровки</h2><p class="muted">Исходный текст сохраняется в поле ниже</p></div>
+        <div class="actions">
+          <button class="secondary" id="loadDemo" type="button">↻ Пример встречи</button>
+          <button class="secondary" id="uploadBtn" type="button">↑ Аудио / видео</button>
+          <input id="fileInput" type="file" accept="audio/*,video/*" hidden>
+          <button class="primary" id="analyzeBtn" type="button" disabled>✦ Обработать текст</button>
+        </div>
+      </div>
+      <p class="notice">Текст обрабатывается локально по языковым правилам. Это черновик: проверьте поручения по исходным репликам. Аудиораспознавание к этому экрану пока не подключено.</p>
+      <div class="transcript-editor">
+        <label for="manualTranscript">Исходная расшифровка</label>
+        <textarea id="manualTranscript" class="manual-transcript" maxlength="200000" placeholder="Вставьте текст совещания. Например:&#10;Данияр Серикович: Ерлан, подготовь претензию до пятницы.&#10;Ерлан: Хорошо, подготовлю." aria-describedby="transcriptHelp"></textarea>
+        <p id="transcriptHelp" class="muted">Сохраняйте имена перед репликами. Если их нет, ответственный будет отмечен для уточнения. До 200 000 символов.</p>
+      </div>
+      <p id="analysisStatus" class="analysis-status" role="status" aria-live="polite">Вставьте расшифровку или откройте пример встречи.</p>
+      <div id="analysisStats" class="analysis-stats" hidden></div>
+      <div class="grid">
+        <article class="summary">
+          <p class="section-label">КРАТКОЕ САММАРИ</p>
+          <div id="summaryText">После обработки здесь появятся ключевые вопросы и решения.</div>
+          <h3 id="highlightsTitle" hidden>Ключевые вопросы</h3>
+          <ul id="summaryHighlights"></ul>
+          <h3 id="decisionsTitle" hidden>Зафиксированные действия</h3>
+          <ul id="summaryDecisions"></ul>
+          <p id="analysisWarnings" class="review-note"></p>
+        </article>
+        <article class="transcript">
+          <div class="card-title">
+            <div><p class="section-label">РЕПЛИКИ УЧАСТНИКОВ</p><span>Имена определяются по тексту</span></div>
+            <button class="secondary" id="copyBtn" type="button" disabled>Копировать</button>
+          </div>
+          <div id="transcriptList"><p class="empty-state">Расшифровка ещё не обработана.</p></div>
+        </article>
+      </div>
+    </section>
+    <section id="tasks" class="tab-content" role="tabpanel" aria-labelledby="tab-tasks" hidden>
+      <div class="toolbar">
+        <div><p class="section-label">КОНТРОЛЬ ИСПОЛНЕНИЯ</p><h2>Поручения</h2><p class="muted">Сверьте цитату, уточните ответственного и срок</p></div>
+        <div class="actions"><button class="secondary" data-export="docx" type="button">↓ DOCX</button><button class="primary" data-export="pdf" type="button">↓ PDF</button></div>
+      </div>
+      <div id="taskList" class="task-list"><p class="empty-state">Сначала обработайте расшифровку.</p></div>
+      <p id="exportStatus" class="muted" role="status"></p>
+    </section>
+    <section id="people" class="tab-content" role="tabpanel" aria-labelledby="tab-people" hidden>
+      <p class="section-label">ГОВОРЯЩИЕ В ТЕКСТЕ</p><h2>Участники совещания</h2>
+      <p class="muted">Разделение по текстовым меткам говорящих; голосовая диаризация не выполняется.</p>
+      <div id="peopleList" class="people-list"></div>
+    </section>
+  </main>
+  <template id="utterance"><div class="utterance"><time></time><i aria-hidden="true"></i><div><b></b><p></p></div></div></template>
+</body>
+</html>
