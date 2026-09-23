@@ -1,0 +1,24 @@
+FROM python:3.12-slim-bookworm
+
+# Install dependencies during image preparation, before mounting any recordings.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ffmpeg libsndfile1 libgomp1 sox \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt requirements-nemo.txt ./
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN python -m pip install --no-cache-dir -r requirements-nemo.txt
+
+COPY local_models.py speaker_diarization.py stt_kazakh_russian.py test.py ./
+
+ENV PYTHONUNBUFFERED=1 \
+    LOCAL_MODELS_DIR=/app/models \
+    HF_HUB_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    DO_NOT_TRACK=1 \
+    WANDB_MODE=disabled
+
+# Use --network none --gpus all, and mount models/media/results (see README).
+CMD ["python", "test.py", "--diarize"]

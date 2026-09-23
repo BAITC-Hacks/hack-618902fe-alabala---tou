@@ -4,6 +4,13 @@ Hackathon team repository for Alabala - ToU
 
 ## Speech recognition on RTX 5050 (Windows PowerShell)
 
+The project uses the matching `torch==2.11.0+cu130` and
+`torchaudio==2.11.0+cu130` wheels, as listed in the
+[official PyTorch installation instructions](https://pytorch.org/get-started/previous-versions/#v2110).
+TorchAudio 2.14.0 is unavailable. If PyTorch 2.14.0 is already installed,
+`python -m pip install --upgrade -r requirements.txt` replaces it with 2.11.0
+and installs the matching TorchAudio release, keeping CUDA 13.0 support.
+
 The existing `.venv` may be unusable if its Python installation was removed. It
 also contains a CPU-only PyTorch build (`torch.version.cuda` is `None`). Create a
 fresh environment with an installed Python 3.10–3.14 (3.12 recommended):
@@ -24,8 +31,9 @@ Verify that PyTorch sees the GPU before loading the model:
 .\.venv-gpu\Scripts\python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CUDA unavailable')"
 ```
 
-The version should contain `+cu130`, and `torch.cuda.is_available()` should
-print `True`. `nvidia-smi` reporting a CUDA version only confirms driver
+The version should contain `+cu130`, and `torch.cuda.is_available()` must
+print `True`. The application requires CUDA for both speech recognition and
+diarization. `nvidia-smi` reporting a CUDA version only confirms driver
 support; it does not mean the installed PyTorch has CUDA enabled.
 
 Run transcription with the GPU:
@@ -36,9 +44,8 @@ Run transcription with the GPU:
 .\.venv-gpu\Scripts\python.exe .\stt_kazakh_russian.py ".\media\Совещание №1.mp3"
 ```
 
-The model downloads from Hugging Face on first use. GPU execution is the
-default. For a CPU run, set `$env:STT_DEVICE = 'cpu'` before running the
-script. Clear it with `Remove-Item Env:STT_DEVICE` to use the GPU again.
+The ASR and diarization models download from Hugging Face on first use. Both
+models always run on CUDA; there is no CPU execution fallback.
 
 ## Long recordings and 8 GB VRAM
 
@@ -68,7 +75,7 @@ Chunk size must be at least 1 second; overlap must be non-negative and smaller
 than half the chunk size. CUDA OOM during inference automatically halves both
 the chunk and its context, down to 1 second of new audio, and retries from the
 same position. Other errors are not hidden. If even that fails, stop other GPU
-jobs and restart the script, or run with `$env:STT_DEVICE = 'cpu'`. OOM during
+jobs, free GPU memory, and retry. CPU inference is disabled. OOM during
 model loading still requires freeing VRAM; shortening audio cannot fix that.
 
 Run one transcription process at a time on this GPU. Calls within one process
@@ -86,6 +93,89 @@ WAV/FLAC first.
 References: [model card and recommended chunk lengths](https://huggingface.co/alibiserikbay/kazakh-russian-mixed-stt),
 [CTC chunking with overlap](https://huggingface.co/blog/asr-chunking),
 [PyTorch CUDA memory management](https://docs.pytorch.org/docs/stable/notes/cuda.html#memory-management).
+
+## Разбивка по говорящим (диаризация)
+
+`transcribe_diarized(path)` сохраняет распознавание смешанной русско-казахской
+речи через текущую модель `rukk` и добавляет диаризацию через
+[pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1).
+Сначала определяются интервалы голосов во всей записи, затем слова STT
+сопоставляются с ними по времени. Смена говорящего или пауза больше 1,5 секунды
+начинает новую реплику. Это разбивка по голосам и паузам; пунктуация не добавляется.
+
+Для первого запуска:
+
+1. Установите обновлённые зависимости в рабочее окружение Python:
+   `python -m pip install -r requirements.txt`.
+2. Войдите в Hugging Face и примите условия на странице модели Community-1.
+3. Настройте read-токен с доступом к этой модели через `hf auth login`
+   или переменную окружения `HF_TOKEN`. Токен не нужно добавлять в исходники.
+
+```powershell
+# После активации рабочего окружения Python:
+hf auth login
+python .\test.py --diarize
+# Если количество участников известно:
+python .\test.py --diarize --num-speakers 5
+```
+
+`test.py --diarize` выводит реплики с таймкодами и сохраняет результаты в
+`results/<имя аудиофайла>.json`. Папку можно задать через `--output-dir`.
+Пример формата вывода (иллюстрация, не результат обработки):
+
+```text
+[00:01.200–00:04.500] SPEAKER_00: коллеги начинаем совещание
+[00:05.100–00:08.800] SPEAKER_01: по нашему направлению план выполнен
+```
+
+Для одного файла с выводом JSON:
+
+```powershell
+python .\stt_kazakh_russian.py ".\media\Совещание №1.mp3" --diarize
+```
+
+Из Python, например для дальнейшего подключения к серверу:
+
+```python
+from stt_kazakh_russian import transcribe_diarized
+
+result = transcribe_diarized("meeting.wav", min_speakers=2, max_speakers=8)
+for segment in result["segments"]:
+    print(segment["start"], segment["end"], segment["speaker"], segment["text"])
+```
+
+Результат содержит `text`, `duration`, `words`, `segments`, `speakers` и
+`speaker_turns`. Время указано в секундах от начала записи. В `words` у каждого
+слова есть `word`, `start`, `end`, `speaker`; в `segments` — `text`, `start`,
+`end`, `speaker`. `speaker_turns` содержит интервалы, полученные от pyannote.
+Можно задать точное `num_speakers` либо границы `min_speakers`/`max_speakers`.
+
+Таймкоды слов приблизительные (`timestamps_approximate: true`): они рассчитаны
+по выходным CTC-кадрам текущей модели. Слово получает голос с наибольшим
+пересечением по времени. Если пересечения нет или два голоса набрали одинаковое
+пересечение, `speaker` равен `null` (в консоли `UNKNOWN`). Слова сохраняются
+даже без определённого говорящего.
+
+`SPEAKER_00` — условный голос в пределах одной записи. Имена участников и
+исполнители поручений автоматически не определяются. Используется exclusive
+диаризация: на интервал назначается один голос. Одновременная речь нескольких
+людей не разделяется на независимые аудиодорожки и может распознаваться неверно.
+Качество разделения голосов при переключении между языками нужно оценить на
+реальных записях совещаний.
+
+Диаризация и STT всегда выполняются на CUDA GPU. Модель диаризации после обработки
+освобождает VRAM перед запуском STT. Диаризация хранит полную волну записи в RAM для
+
+согласованного определения голосов. Загрузка
+модели при первом запуске требует интернета; `DIARIZATION_MODEL` позволяет
+указать путь к заранее скачанному локальному каталогу модели.
+
+Проверки декодирования, временных меток и сопоставления говорящих без скачивания
+моделей (при установленных основных зависимостях):
+
+```powershell
+python -m unittest discover -s tests -v
+```
 =======
 # QORIT — AI-протоколирование совещаний
 

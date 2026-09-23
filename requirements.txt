@@ -1,11 +1,12 @@
 --extra-index-url https://download.pytorch.org/whl/cu130
 
-# CUDA-enabled PyTorch build for the RTX 5050
-torch==2.14.0+cu130
+# Matching CUDA-enabled PyTorch/TorchAudio releases for the RTX 5050.
+# TorchAudio 2.14.0 is not published; keep both packages on 2.11.0.
+torch==2.11.0+cu130
+torchaudio==2.11.0+cu130
 
 # Project dependencies
 Flask
-huggingface_hub
 librosa
 numpy
 soundfile

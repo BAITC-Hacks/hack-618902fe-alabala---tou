@@ -105,6 +105,41 @@ class ChunkedTranscriptionTests(unittest.TestCase):
                 stt.transcribe(self.path, chunk_seconds=chunk, overlap_seconds=overlap)
         self.loader.assert_not_called()
 
+    def test_word_timestamps_preserve_a_word_across_chunks(self):
+        # "ab" straddles 1s; the next "b" follows a word delimiter.
+        ids = [0] * 90 + [1] * 30 + [2] * 10 + [1] * 30
+        self.write(np.repeat(ids, 160).astype(np.float32))
+        result = stt.transcribe_with_timestamps(self.path, chunk_seconds=1, overlap_seconds=0.25)
+        self.assertEqual(result["text"], "ab b")
+        self.assertTrue(result["timestamps_approximate"])
+        self.assertEqual([word["word"] for word in result["words"]], ["ab", "b"])
+        for word, start, end in zip(result["words"], [0.0, 1.3], [1.2, 1.6]):
+            self.assertAlmostEqual(word["start"], start)
+            self.assertAlmostEqual(word["end"], end)
+        self.assertAlmostEqual(result["duration"], 1.6)
+
+    def test_timestamps_are_clipped_to_short_audio_and_empty_is_structured(self):
+        self.write(np.ones(10, dtype=np.float32))
+        result = stt.transcribe_with_timestamps(self.path)
+        self.assertEqual(result["text"], "b")
+        self.assertEqual(result["words"][0]["start"], 0.0)
+        self.assertLessEqual(result["words"][0]["end"], 10 / 16000)
+        self.write(np.empty(0, dtype=np.float32))
+        self.loader.reset_mock()
+        result = stt.transcribe_with_timestamps(self.path)
+        self.assertEqual(result["words"], [])
+        self.assertEqual(result["text"], "")
+        self.assertEqual(result["duration"], 0)
+        self.loader.assert_not_called()
+
+    def test_timestamps_after_resampling_and_padding_do_not_drift(self):
+        self.write(np.ones((24001, 2), dtype=np.float32), rate=8000)
+        result = stt.transcribe_with_timestamps(self.path, chunk_seconds=1, overlap_seconds=0)
+        self.assertEqual(result["text"], "b")
+        self.assertEqual(len(result["words"]), 1)
+        self.assertEqual(result["words"][0]["start"], 0)
+        self.assertAlmostEqual(result["words"][0]["end"], 24001 / 8000)
+
 
 if __name__ == "__main__":
     unittest.main()

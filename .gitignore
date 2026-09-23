@@ -8,6 +8,10 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Generated meeting transcripts
+results/
+models/
+
 # Virtual environments
 .venv/
 .venv-*/

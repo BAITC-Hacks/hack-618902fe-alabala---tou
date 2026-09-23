@@ -1,0 +1,9 @@
+# Only runtime sources and dependency lists belong in the image build context.
+*
+!Dockerfile.nemo
+!requirements.txt
+!requirements-nemo.txt
+!local_models.py
+!speaker_diarization.py
+!stt_kazakh_russian.py
+!test.py
