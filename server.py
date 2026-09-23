@@ -1,4 +1,4 @@
-"""HTTP API: audio -> local STT -> Ollama -> JSON / PDF / DOCX."""
+"""HTTP API: audio -> local STT -> local LLM -> JSON / PDF / DOCX."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ AUDIO_DEMUXERS = {
     ".m4a": "mov", ".webm": "matroska",
 }
 ALLOWED_EXTENSIONS = set(AUDIO_DEMUXERS)
-# STT and Ollama share one GPU. Use one server process, not multiple workers.
+# Serialize the STT/LLM pipeline. Use one server process, not multiple workers.
 _PIPELINE_LOCK = Lock()
 
 
@@ -141,7 +141,11 @@ def _process_upload() -> dict:
                 provider=current_app.config["LLM_PROVIDER"],
                 ollama_url=current_app.config["OLLAMA_URL"],
                 ollama_model=current_app.config["OLLAMA_MODEL"],
-                timeout=current_app.config["OLLAMA_TIMEOUT"],
+                llama_url=current_app.config["LLAMA_URL"],
+                llama_model=current_app.config["LLAMA_MODEL"],
+                timeout=current_app.config[
+                    "LLAMA_TIMEOUT" if current_app.config["LLM_PROVIDER"] == "local_llama" else "OLLAMA_TIMEOUT"
+                ],
             )
         finally:
             _PIPELINE_LOCK.release()
@@ -170,11 +174,12 @@ def create_app(config: dict | None = None) -> Flask:
         OLLAMA_URL=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
         OLLAMA_MODEL=os.getenv("OLLAMA_MODEL", "Gemma-4-12B-it-Q6_K:latest"),
         OLLAMA_TIMEOUT=float(os.getenv("OLLAMA_TIMEOUT", "180")),
+        LLAMA_URL=os.getenv("LLAMA_URL", "http://127.0.0.1:8080"),
+        LLAMA_MODEL=os.getenv("LLAMA_MODEL", "gemma-4-12b-it"),
+        LLAMA_TIMEOUT=float(os.getenv("LLAMA_TIMEOUT", "180")),
     )
     if config:
         app.config.update(config)
-    if app.config["LLM_PROVIDER"] == "local_llama":
-        app.config["LLM_PROVIDER"] = "ollama"
     ZoneInfo(app.config["APP_TIMEZONE"])
 
     @app.after_request
