@@ -109,6 +109,14 @@ class GroundingTests(unittest.TestCase):
             with self.subTest(item=item), self.assertRaises(analysis.AnalysisError):
                 analyze([item], text="айгуль подготовьте отчет до завтра")
 
+    def test_validation_log_has_reason_without_private_transcript(self):
+        with self.assertLogs(analysis.logger, level="WARNING") as captured:
+            with self.assertRaises(analysis.AnalysisError):
+                analyze([task("несуществующая цитата")], text="закрытое содержание совещания")
+        self.assertIn("ungrounded task", captured.output[0])
+        self.assertNotIn("несуществующая цитата", " ".join(captured.output))
+        self.assertNotIn("закрытое содержание", " ".join(captured.output))
+
     def test_invalid_date_enum_boolean_and_extra_fields_are_rejected(self):
         for change in ({"deadline": "2026-02-30"}, {"urgency": "urgent"},
                        {"direction": "madeup"}, {"completed": "false"}, {"extra": 7}):

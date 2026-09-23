@@ -9,11 +9,15 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, timedelta
 import json
+import logging
 import re
 import socket
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisError(RuntimeError):
@@ -360,6 +364,7 @@ def analyze_meeting(transcript: dict, *, meeting_date: date, as_of: date,
             try:
                 task = _validate_task(raw, chunk, meeting_date, as_of)
             except (ValueError, TypeError, OverflowError) as exc:
+                logger.warning("Meeting task validation failed: %s", exc)
                 raise AnalysisError("Не удалось проверить поручения модели по расшифровке. Повторите запрос или смените модель.") from exc
             key = (_compact(task["source_quote"]).casefold(), task["title"].casefold(), task["assignee"], task["deadline"])
             if key in seen:
