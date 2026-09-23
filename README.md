@@ -1,6 +1,6 @@
 # QORIT — протоколирование совещаний
 
-Локальный конвейер: аудио → Kazakh/Russian STT → NeMo-диаризация → llama.cpp (Gemma Q6_K) →
+Локальный конвейер: аудио → Kazakh/Russian STT → NeMo-диаризация → llama.cpp (Gemma Q4_K_S) →
 поручения, сводка статусов и классификация → JSON, PDF или DOCX.
 Исходные записи и расшифровки не отправляются во внешние сервисы:
 `LLAMA_URL` должен указывать на ваш локальный сервер.
@@ -14,14 +14,14 @@
 .\start.cmd
 ```
 
-Он запускает Gemma 4 12B IT Q6_K и HTTP API с веб-интерфейсом в одном
+Он запускает Gemma 4 12B IT Q4_K_S и HTTP API с веб-интерфейсом в одном
 WSL-окружении. PowerShell-скрипты и изменение Execution Policy не нужны.
 Дождитесь сообщения `Ready` и откройте **http://localhost:8000**.
 Оставьте окно открытым; **Ctrl+C** останавливает оба сервера.
 
 В `.env` укажите `LLAMA_MODEL_PATH` — путь к уже скачанному
-`gemma-4-12b-it-Q6_K.gguf`. Подходит Windows-путь вида
-`C:/models/gemma-4-12b-it-Q6_K.gguf` или путь внутри WSL. При первом запуске
+`gemma-4-12b-it-Q4_K_S.gguf`. Подходит Windows-путь вида
+`C:/ollama/models/gemma-4-12b-it-Q4_K_S.gguf` или путь внутри WSL. При первом запуске
 launcher подготавливает CPU-сборку llama.cpp `b11125` в `.runtime/llama/`:
 если архив отсутствует, скачивает его с GitHub (около 17 МБ) и проверяет SHA-256.
 Веса модели не скачиваются. Для собственной Linux-сборки задайте
@@ -48,7 +48,7 @@ Gemma и API. Адрес llama.cpp для API задаётся автомати�
 cp -n .env.example .env
 ```
 
-### Gemma 4 12B IT Q6_K через llama.cpp (`local_llama`)
+### Gemma 4 12B IT Q4_K_S через llama.cpp (`local_llama`)
 
 Приложение обращается к отдельно запущенному `llama-server` по
 `/v1/chat/completions`. Python не загружает GGUF самостоятельно;
@@ -57,15 +57,15 @@ cp -n .env.example .env
 ```dotenv
 LLM_PROVIDER=local_llama
 LLAMA_URL=http://127.0.0.1:8080
-LLAMA_MODEL=gemma-4-12b-it-Q6_K
+LLAMA_MODEL=gemma-4-12b-it-Q4_K_S
 LLAMA_TIMEOUT=600
 ```
 
-Используется файл `gemma-4-12b-it-Q6_K.gguf` от Unsloth. Для ручного запуска
+Используется локальный файл `gemma-4-12b-it-Q4_K_S.gguf`. Для ручного запуска
 из WSL укажите пути к Linux-сборке `llama-server` и скачанной модели:
 
 ```bash
-/path/to/llama-server -m /mnt/c/models/gemma-4-12b-it-Q6_K.gguf --alias gemma-4-12b-it-Q6_K --host 127.0.0.1 --port 8080 --jinja -c 8192 -np 1 -ngl 0
+/path/to/llama-server -m /mnt/c/ollama/models/gemma-4-12b-it-Q4_K_S.gguf --alias gemma-4-12b-it-Q4_K_S --host 127.0.0.1 --port 8080 --jinja -c 8192 -np 1 -ngl 0
 ```
 
 Квантование определяется файлом GGUF, выбранным через `-m`, а `LLAMA_MODEL`
@@ -149,7 +149,7 @@ PDF/DOCX используют ту же схему анализа, что и JSO
   "as_of": "2026-09-23",
   "timezone": "Asia/Qyzylorda",
   "generated_at": "2026-09-23T10:00:00+00:00",
-  "analysis_method": "local_llama:gemma-4-12b-it-Q6_K",
+  "analysis_method": "local_llama:gemma-4-12b-it-Q4_K_S",
   "transcript": {
     "text": "айгуль подготовьте отчет до завтра",
     "segments": [],

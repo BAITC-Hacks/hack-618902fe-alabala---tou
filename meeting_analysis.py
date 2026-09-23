@@ -332,7 +332,7 @@ def _validate_task(raw: dict, chunk: list[dict], anchor: date, as_of: date) -> d
 def analyze_meeting(transcript: dict, *, meeting_date: date, as_of: date,
                     provider: str = "local_llama", timeout: float = 600,
                     llama_url: str = "http://127.0.0.1:8080",
-                    llama_model: str = "gemma-4-12b-it-Q6_K") -> dict:
+                    llama_model: str = "gemma-4-12b-it-Q4_K_S") -> dict:
     """Return tasks, aggregate counts, and limitations; raise on provider failure."""
     if provider != "local_llama":
         raise AnalysisError("Поддерживается только LLM_PROVIDER=local_llama (llama.cpp).")

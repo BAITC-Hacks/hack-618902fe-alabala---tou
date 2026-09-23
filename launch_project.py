@@ -1,4 +1,4 @@
-"""Start the local Q6_K model and audio API together inside Linux/WSL.
+"""Start the local Q4_K_S model and audio API together inside Linux/WSL.
 
 Windows users run start.cmd. Model files must already be present locally.
 """
@@ -27,7 +27,7 @@ from urllib.request import ProxyHandler, build_opener, urlopen
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-MODEL_ALIAS = "gemma-4-12b-it-Q6_K"
+MODEL_ALIAS = "gemma-4-12b-it-Q4_K_S"
 LOG_DIR = PROJECT_DIR / "results" / "launcher"
 RUNTIME_DIR = PROJECT_DIR / ".runtime" / "llama"
 DEFAULT_BINARY = RUNTIME_DIR / "llama-b11125" / "llama-server"
@@ -185,7 +185,7 @@ def preflight(config: Config) -> None:
     if config.model_path.name != f"{MODEL_ALIAS}.gguf":
         raise LaunchError(f"LLAMA_MODEL_PATH must point to {MODEL_ALIAS}.gguf.")
     if not config.model_path.is_file() or config.model_path.stat().st_size == 0:
-        raise LaunchError(f"Q6_K model is missing or empty: {config.model_path}. Set LLAMA_MODEL_PATH in .env.")
+        raise LaunchError(f"Q4_K_S model is missing or empty: {config.model_path}. Set LLAMA_MODEL_PATH in .env.")
     if not config.binary.is_file() or not os.access(config.binary, os.X_OK):
         raise LaunchError(
             f"Linux llama-server is missing or not executable: {config.binary}. "

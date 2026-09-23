@@ -185,12 +185,12 @@ test('source-only protocol is honest about missing tasks and participants', () =
 
 test('server reports retain analysis origin, classification, evidence and original voice IDs in both exports', () => {
   const result = fixture();
-  Object.assign(result, {method: 'server', analysisMethod: 'local_llama:gemma-4-12b-it-Q6_K', reportDate: '2026-09-23', reportTimezone: 'Asia/Almaty', summary: ''});
+  Object.assign(result, {method: 'server', analysisMethod: 'local_llama:gemma-4-12b-it-Q4_K_S', reportDate: '2026-09-23', reportTimezone: 'Asia/Almaty', summary: ''});
   Object.assign(result.tasks[0], {urgency: 'high', direction: 'legal', serverStatus: 'overdue', status: 'Выполнено', sourceSpeaker: 'SPEAKER_00', originalOwner: 'SPEAKER_01'});
   result.utterances[0].originalSpeaker = 'SPEAKER_00';
   const before = structuredClone(result);
   for (const output of [unzip(createDocx(result)).get('word/document.xml'), createPrintHtml(result)]) {
-    for (const expected of ['Источник анализа: сервер.', 'local_llama:gemma-4-12b-it-Q6_K', 'Исходный отчёт: 2026-09-23',
+    for (const expected of ['Источник анализа: сервер.', 'local_llama:gemma-4-12b-it-Q4_K_S', 'Исходный отчёт: 2026-09-23',
       'Asia/Almaty', 'Сводка ответа сервера', 'Развёрнутое саммари не получено от backend.',
       'Срочность по оценке сервера: Высокая', 'Направление: Юридическое', 'Статус: Выполнено',
       'Статус при серверной обработке: Просрочено (до ручных правок)',

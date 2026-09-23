@@ -188,13 +188,13 @@ class LocalLlamaTransportTests(unittest.TestCase):
         for url in ("http://localhost:8080/", "http://localhost:8080/v1", "http://localhost:8080/v1/"):
             with self.subTest(url=url), patch.object(analysis, "urlopen", return_value=self.response('{"tasks": []}')) as request:
                 result = analysis._request_llama_tasks([{"text": "начинаем", "speaker": None}], ANCHOR,
-                                                       url, "gemma-4-12b-it-Q6_K", 42)
+                                                       url, "gemma-4-12b-it-Q4_K_S", 42)
             self.assertEqual(result, [])
             sent = request.call_args.args[0]
             self.assertEqual(sent.full_url, "http://localhost:8080/v1/chat/completions")
             self.assertEqual(sent.get_method(), "POST")
             body = json.loads(sent.data)
-            self.assertEqual(body["model"], "gemma-4-12b-it-Q6_K")
+            self.assertEqual(body["model"], "gemma-4-12b-it-Q4_K_S")
             self.assertFalse(body["stream"])
             self.assertEqual(body["response_format"], {"type": "json_schema", "json_schema": {
                 "name": "meeting_tasks", "strict": True, "schema": analysis.TASK_SCHEMA,
@@ -202,13 +202,13 @@ class LocalLlamaTransportTests(unittest.TestCase):
             self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
             self.assertEqual(request.call_args.kwargs["timeout"], 42)
 
-    def test_default_provider_uses_q6_k_model(self):
+    def test_default_provider_uses_q4_k_s_model(self):
         transcript = {"text": "начинаем"}
         with patch.object(analysis, "_request_llama_tasks", return_value=[]) as request:
             result = analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=ANCHOR)
         request.assert_called_once_with(analysis._chunks(transcript)[0], ANCHOR,
-                                        "http://127.0.0.1:8080", "gemma-4-12b-it-Q6_K", 600)
-        self.assertEqual(result["analysis_method"], "local_llama:gemma-4-12b-it-Q6_K")
+                                        "http://127.0.0.1:8080", "gemma-4-12b-it-Q4_K_S", 600)
+        self.assertEqual(result["analysis_method"], "local_llama:gemma-4-12b-it-Q4_K_S")
 
     def test_unsupported_provider_fails_without_network_request(self):
         with patch.object(analysis, "urlopen") as request, self.assertRaises(analysis.AnalysisError):

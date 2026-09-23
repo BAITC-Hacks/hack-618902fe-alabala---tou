@@ -106,7 +106,7 @@ class ServerTests(unittest.TestCase):
 
     def test_all_routes_forward_local_llama_configuration(self):
         self.app.config.update(LLM_PROVIDER="local_llama", LLAMA_URL="http://127.0.0.1:8091",
-                               LLAMA_MODEL="gemma-4-12b-it-Q6_K", LLAMA_TIMEOUT=321)
+                               LLAMA_MODEL="gemma-4-12b-it-Q4_K_S", LLAMA_TIMEOUT=321)
         for route in ROUTES:
             with self.subTest(route=route):
                 self.analyze_meeting.reset_mock()
@@ -118,7 +118,7 @@ class ServerTests(unittest.TestCase):
                     "meeting_date": date(2026, 9, 23),
                     "as_of": self.analyze_meeting.call_args.kwargs["as_of"],
                     "provider": "local_llama", "llama_url": "http://127.0.0.1:8091",
-                    "llama_model": "gemma-4-12b-it-Q6_K", "timeout": 321,
+                    "llama_model": "gemma-4-12b-it-Q4_K_S", "timeout": 321,
                 })
 
     def test_api_routes_remain_post_only(self):
@@ -243,12 +243,12 @@ class ServerTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
-    def test_no_environment_defaults_to_q6_local_llama(self):
+    def test_no_environment_defaults_to_q4_k_s_local_llama(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(server, "load_dotenv"):
             app = server.create_app({"TESTING": True})
         self.assertEqual(app.config["LLM_PROVIDER"], "local_llama")
         self.assertEqual(app.config["LLAMA_URL"], "http://127.0.0.1:8080")
-        self.assertEqual(app.config["LLAMA_MODEL"], "gemma-4-12b-it-Q6_K")
+        self.assertEqual(app.config["LLAMA_MODEL"], "gemma-4-12b-it-Q4_K_S")
         self.assertEqual(app.config["LLAMA_TIMEOUT"], 600)
 
     def test_environment_configuration_is_preserved(self):
@@ -267,7 +267,7 @@ class AdapterTests(unittest.TestCase):
     def test_json_route_uses_real_analysis_and_llama_chat_response(self):
         app = server.create_app({
             "TESTING": True, "LLM_PROVIDER": "local_llama",
-            "LLAMA_URL": "http://127.0.0.1:8093", "LLAMA_MODEL": "gemma-4-12b-it-Q6_K",
+            "LLAMA_URL": "http://127.0.0.1:8093", "LLAMA_MODEL": "gemma-4-12b-it-Q4_K_S",
             "LLAMA_TIMEOUT": 123,
         })
         raw_task = {
@@ -288,7 +288,7 @@ class AdapterTests(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         report = response.get_json()
-        self.assertEqual(report["analysis_method"], "local_llama:gemma-4-12b-it-Q6_K")
+        self.assertEqual(report["analysis_method"], "local_llama:gemma-4-12b-it-Q4_K_S")
         self.assertEqual(report["dashboard"]["total"], 1)
         self.assertEqual(report["tasks"][0]["assignee"], "Айгуль")
         self.assertEqual(report["tasks"][0]["deadline"], "2026-09-24")
@@ -298,7 +298,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://127.0.0.1:8093/v1/chat/completions")
         self.assertEqual(network.call_args.kwargs, {"timeout": 123})
         sent = json.loads(request.data)
-        self.assertEqual(sent["model"], "gemma-4-12b-it-Q6_K")
+        self.assertEqual(sent["model"], "gemma-4-12b-it-Q4_K_S")
         self.assertEqual(sent["response_format"]["type"], "json_schema")
         self.assertEqual(json.loads(sent["messages"][1]["content"])["meeting_date"], "2026-09-23")
 

@@ -38,8 +38,8 @@ class LauncherTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "linux", "Windows drive conversion targets WSL")
     def test_windows_drive_path_maps_to_wsl_without_losing_spaces(self):
-        actual = launcher.resolve_path(r"C:\Local Models\gemma-4-12b-it-Q6_K.gguf", self.directory)
-        self.assertEqual(actual, Path("/mnt/c/Local Models/gemma-4-12b-it-Q6_K.gguf"))
+        actual = launcher.resolve_path(r"C:\Local Models\gemma-4-12b-it-Q4_K_S.gguf", self.directory)
+        self.assertEqual(actual, Path("/mnt/c/Local Models/gemma-4-12b-it-Q4_K_S.gguf"))
         self.assertEqual(launcher.resolve_path("D:/Models/file.gguf"), Path("/mnt/d/Models/file.gguf"))
 
     def test_child_connection_matches_the_model_server_command(self):
@@ -50,7 +50,7 @@ class LauncherTests(unittest.TestCase):
         command = launcher.build_llama_command(config)
         self.assertEqual(environment["LLM_PROVIDER"], "local_llama")
         self.assertEqual(environment["LLAMA_MODEL"], command[command.index("--alias") + 1])
-        self.assertEqual(environment["LLAMA_MODEL"], "gemma-4-12b-it-Q6_K")
+        self.assertEqual(environment["LLAMA_MODEL"], "gemma-4-12b-it-Q4_K_S")
         self.assertEqual(environment["LLAMA_URL"], "http://127.0.0.1:" + command[command.index("--port") + 1])
         self.assertEqual(environment["HOST"], "127.0.0.1")
         self.assertEqual(environment["PORT"], "19000")
@@ -98,7 +98,7 @@ class LauncherTests(unittest.TestCase):
         invalid = self.directory / "gemma-4-12b-it-Q8_0.gguf"
         for model in (invalid, self.config.model_path):
             with self.subTest(model=model), patch.object(launcher.sys, "platform", "linux"):
-                with self.assertRaisesRegex(launcher.LaunchError, "Q6_K"):
+                with self.assertRaisesRegex(launcher.LaunchError, "Q4_K_S"):
                     launcher.preflight(replace(self.config, model_path=model))
         self.config.model_path.touch()
         with patch.object(launcher.sys, "platform", "linux"):

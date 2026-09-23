@@ -179,7 +179,7 @@ def create_app(config: dict | None = None) -> Flask:
         STT_DIARIZE=os.getenv("STT_DIARIZE", "true"),
         LLM_PROVIDER=os.getenv("LLM_PROVIDER", "local_llama"),
         LLAMA_URL=os.getenv("LLAMA_URL", "http://127.0.0.1:8080"),
-        LLAMA_MODEL=os.getenv("LLAMA_MODEL", "gemma-4-12b-it-Q6_K"),
+        LLAMA_MODEL=os.getenv("LLAMA_MODEL", "gemma-4-12b-it-Q4_K_S"),
         LLAMA_TIMEOUT=float(os.getenv("LLAMA_TIMEOUT", "600")),
     )
     if config:
