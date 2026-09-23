@@ -3,6 +3,8 @@
 from copy import deepcopy
 from datetime import date
 from io import BytesIO
+import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,12 +18,13 @@ import wave
 from docx import Document
 from pypdf import PdfReader
 
+import meeting_analysis
 import server
 
 
 TRANSCRIPT = {"text": "Айгуль, подготовьте отчёт до завтра", "duration": 2, "segments": []}
 ANALYSIS = {
-    "analysis_method": "ollama:test", "warnings": [],
+    "analysis_method": "local_llama:test", "warnings": [],
     "tasks": [{"id": "task-0001", "title": "Подготовить отчёт", "assignee": "Айгуль",
                "deadline": "2026-09-24", "deadline_text": "до завтра", "status": "in_progress",
                "urgency": "high", "direction": "finance", "source_quote": TRANSCRIPT["text"],
@@ -101,6 +104,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.transcribe_audio.call_count, 3)
         self.assertEqual(self.analyze_meeting.call_count, 3)
 
+    def test_all_routes_forward_local_llama_configuration(self):
+        self.app.config.update(LLM_PROVIDER="local_llama", LLAMA_URL="http://127.0.0.1:8091",
+                               LLAMA_MODEL="gemma-4-12b-it-Q6_K", LLAMA_TIMEOUT=321)
+        for route in ROUTES:
+            with self.subTest(route=route):
+                self.analyze_meeting.reset_mock()
+                response = self.post(route)
+                self.assertEqual(response.status_code, 200)
+                self.analyze_meeting.assert_called_once()
+                self.assertEqual(self.analyze_meeting.call_args.args, (TRANSCRIPT,))
+                self.assertEqual(self.analyze_meeting.call_args.kwargs, {
+                    "meeting_date": date(2026, 9, 23),
+                    "as_of": self.analyze_meeting.call_args.kwargs["as_of"],
+                    "provider": "local_llama", "llama_url": "http://127.0.0.1:8091",
+                    "llama_model": "gemma-4-12b-it-Q6_K", "timeout": 321,
+                })
+
     def test_api_routes_remain_post_only(self):
         frontend_routes = {"/", "/index.html", "/favicon.ico", "/api/config"}
         frontend_routes.update(f"/{filename}" for filename in server.FRONTEND_ASSETS)
@@ -152,7 +172,7 @@ class ServerTests(unittest.TestCase):
 
     def test_public_config_contains_only_limits_and_diarization_default(self):
         self.app.config.update(MAX_CONTENT_LENGTH=123456, MAX_AUDIO_SECONDS=456,
-                               STT_DIARIZE="false", OLLAMA_URL="http://secret-internal-host:11434")
+                               STT_DIARIZE="false", LLAMA_URL="http://secret-internal-host:8080")
         response = self.client.get("/api/config")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {
@@ -204,10 +224,10 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(all(not path.exists() for path in self.paths))
 
     def test_analysis_failure_is_json_for_download_route(self):
-        self.analyze_meeting.side_effect = server.AnalysisError("Ollama недоступна")
+        self.analyze_meeting.side_effect = server.AnalysisError("llama.cpp недоступна")
         response = self.post(ROUTES[1])
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.get_json(), {"error": "Ollama недоступна"})
+        self.assertEqual(response.get_json(), {"error": "llama.cpp недоступна"})
 
     def test_missing_meeting_date_is_explicit_and_diarization_optional(self):
         response = self.post(meeting_date="", diarize="false")
@@ -222,7 +242,66 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.normalize_audio.call_args.args[0].name, "input.wav")
 
 
+class ConfigurationTests(unittest.TestCase):
+    def test_no_environment_defaults_to_q6_local_llama(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(server, "load_dotenv"):
+            app = server.create_app({"TESTING": True})
+        self.assertEqual(app.config["LLM_PROVIDER"], "local_llama")
+        self.assertEqual(app.config["LLAMA_URL"], "http://127.0.0.1:8080")
+        self.assertEqual(app.config["LLAMA_MODEL"], "gemma-4-12b-it-Q6_K")
+        self.assertEqual(app.config["LLAMA_TIMEOUT"], 600)
+
+    def test_environment_configuration_is_preserved(self):
+        settings = {
+            "LLM_PROVIDER": "local_llama", "LLAMA_URL": "http://127.0.0.1:8092/v1",
+            "LLAMA_MODEL": "test-alias", "LLAMA_TIMEOUT": "432.5",
+        }
+        with patch.dict(os.environ, settings, clear=True), patch.object(server, "load_dotenv"):
+            app = server.create_app({"TESTING": True})
+        for key in ("LLM_PROVIDER", "LLAMA_URL", "LLAMA_MODEL"):
+            self.assertEqual(app.config[key], settings[key])
+        self.assertEqual(app.config["LLAMA_TIMEOUT"], 432.5)
+
+
 class AdapterTests(unittest.TestCase):
+    def test_json_route_uses_real_analysis_and_llama_chat_response(self):
+        app = server.create_app({
+            "TESTING": True, "LLM_PROVIDER": "local_llama",
+            "LLAMA_URL": "http://127.0.0.1:8093", "LLAMA_MODEL": "gemma-4-12b-it-Q6_K",
+            "LLAMA_TIMEOUT": 123,
+        })
+        raw_task = {
+            "title": "Подготовить отчёт", "assignee": "Айгуль", "deadline": "2026-09-24",
+            "deadline_text": "до завтра", "completed": False, "completion_quote": None,
+            "urgency": "medium", "direction": "finance", "source_quote": TRANSCRIPT["text"],
+            "needs_review": False,
+        }
+        payload = {"choices": [{"finish_reason": "stop", "message": {
+            "content": json.dumps({"tasks": [raw_task]}, ensure_ascii=False),
+        }}]}
+        with patch.object(server, "normalize_audio"), \
+                patch.object(server, "transcribe_audio", return_value=TRANSCRIPT), \
+                patch.object(meeting_analysis, "urlopen", return_value=BytesIO(json.dumps(payload).encode())) as network:
+            response = app.test_client().post("/process-audio", data={
+                "audio": (BytesIO(b"audio fixture"), "meeting.wav"),
+                "meeting_date": "2026-09-23", "diarize": "false",
+            })
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        report = response.get_json()
+        self.assertEqual(report["analysis_method"], "local_llama:gemma-4-12b-it-Q6_K")
+        self.assertEqual(report["dashboard"]["total"], 1)
+        self.assertEqual(report["tasks"][0]["assignee"], "Айгуль")
+        self.assertEqual(report["tasks"][0]["deadline"], "2026-09-24")
+        self.assertEqual(report["tasks"][0]["source_quote"], TRANSCRIPT["text"])
+        network.assert_called_once()
+        request = network.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8093/v1/chat/completions")
+        self.assertEqual(network.call_args.kwargs, {"timeout": 123})
+        sent = json.loads(request.data)
+        self.assertEqual(sent["model"], "gemma-4-12b-it-Q6_K")
+        self.assertEqual(sent["response_format"]["type"], "json_schema")
+        self.assertEqual(json.loads(sent["messages"][1]["content"])["meeting_date"], "2026-09-23")
+
     def test_speech_adapter_releases_model_after_success_and_failure(self):
         fake = SimpleNamespace(transcribe_diarized=Mock(return_value=TRANSCRIPT),
                                transcribe_with_timestamps=Mock(return_value=TRANSCRIPT), release_models=Mock())

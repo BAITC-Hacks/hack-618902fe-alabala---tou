@@ -21,10 +21,10 @@ test('malformed and oversized imports are rejected, never used as trusted state'
 });
 test('server metadata, stable ids and task classification survive backup without local relabelling',()=>{
  const draft=fixture();
- Object.assign(draft.result,{method:'server',analysisMethod:'ollama:qwen',reportDate:'2026-09-23',reportTimezone:'Asia/Almaty'});
+ Object.assign(draft.result,{method:'server',analysisMethod:'local_llama:gemma-4-12b-it-Q6_K',reportDate:'2026-09-23',reportTimezone:'Asia/Almaty'});
  Object.assign(draft.result.tasks[0],{id:'task-7b',urgency:'high',direction:'legal',sourceSpeaker:'SPEAKER_00',serverStatus:'completed',originalOwner:'Ерлан'});
  const result=store.parse(store.serialize(draft)).result;
- assert.equal(result.method,'server');assert.equal(result.analysisMethod,'ollama:qwen');
+ assert.equal(result.method,'server');assert.equal(result.analysisMethod,'local_llama:gemma-4-12b-it-Q6_K');
  assert.equal(result.reportDate,'2026-09-23');assert.equal(result.reportTimezone,'Asia/Almaty');
  for(const key of ['id','urgency','direction','sourceSpeaker','serverStatus','originalOwner']) assert.equal(result.tasks[0][key],draft.result.tasks[0][key]);
  draft.result.tasks[0].sourceSpeaker=null;draft.result.reportDate=null;

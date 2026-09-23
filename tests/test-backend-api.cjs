@@ -6,7 +6,7 @@ const quote = 'Айжан подготовит отчёт до 25 сентябр
 function report(overrides = {}) {
   return {
     filename: 'meeting.wav', meeting_date: '2026-09-23', as_of: '2026-09-23',
-    timezone: 'Asia/Almaty', generated_at: '2026-09-23T10:00:00+00:00', analysis_method: 'ollama:qwen2.5:7b',
+    timezone: 'Asia/Almaty', generated_at: '2026-09-23T10:00:00+00:00', analysis_method: 'local_llama:gemma-4-12b-it-Q6_K',
     transcript: {text: quote, segments: [{start: 65.4, end: 70.1, speaker: 'SPEAKER_00', text: quote}], speakers: ['SPEAKER_00']},
     tasks: [{id: 'task-0001', title: 'Подготовить отчёт', assignee: 'Айжан', deadline: '2026-09-25', deadline_text: 'до 25 сентября',
       status: 'in_progress', urgency: 'medium', direction: 'finance', source_quote: quote, source_speaker: 'SPEAKER_00', needs_review: false}],
@@ -23,7 +23,7 @@ test('adapts real report schema without inventing a narrative summary or inferri
   assert.deepEqual(input, before);
   assert.equal(sourceText, quote);
   assert.equal(result.method, 'server');
-  assert.equal(result.analysisMethod, 'ollama:qwen2.5:7b');
+  assert.equal(result.analysisMethod, 'local_llama:gemma-4-12b-it-Q6_K');
   assert.equal(result.reportDate, '2026-09-23');
   assert.equal(result.reportTimezone, 'Asia/Almaty');
   assert.equal(metadata.meetingDate, '2026-09-23');

@@ -81,7 +81,7 @@ class FrontendContractTests(unittest.TestCase):
     def setUp(self):
         self.app = server.create_app({
             "TESTING": True, "STT_DIARIZE": True, "APP_TIMEZONE": "Asia/Almaty",
-            "LLM_PROVIDER": "ollama", "OLLAMA_MODEL": "contract-test",
+            "LLM_PROVIDER": "local_llama", "LLAMA_MODEL": "contract-test",
         })
         self.client = self.app.test_client()
 
@@ -90,7 +90,7 @@ class FrontendContractTests(unittest.TestCase):
         raw_tasks = deepcopy(RAW_TASKS if raw_tasks is None else raw_tasks)
         with patch.object(server, "normalize_audio") as normalize, \
                 patch.object(server, "transcribe_audio", return_value=transcript) as transcribe, \
-                patch.object(meeting_analysis, "_request_tasks", return_value=raw_tasks) as llm, \
+                patch.object(meeting_analysis, "_request_llama_tasks", return_value=raw_tasks) as llm, \
                 patch.object(meeting_analysis, "urlopen", side_effect=AssertionError("Network disabled")) as network, \
                 patch.object(server, "datetime", wraps=datetime) as clock:
             clock.now.return_value = datetime(2026, 9, 23, 10, 0, tzinfo=timezone.utc)
@@ -122,11 +122,11 @@ class FrontendContractTests(unittest.TestCase):
         result, metadata = adapted["result"], adapted["metadata"]
         self.assertEqual(adapted["sourceText"], TRANSCRIPT["text"])
         self.assertEqual(result["method"], "server")
-        self.assertEqual(result["analysisMethod"], "ollama:contract-test")
+        self.assertEqual(result["analysisMethod"], "local_llama:contract-test")
         self.assertEqual(metadata, {
             "meetingDate": "2026-09-23", "filename": "Тестовое совещание.wav",
             "asOf": "2026-09-23", "timezone": "Asia/Almaty",
-            "generatedAt": "2026-09-23T10:00:00+00:00", "analysisMethod": "ollama:contract-test",
+            "generatedAt": "2026-09-23T10:00:00+00:00", "analysisMethod": "local_llama:contract-test",
         })
         self.assertEqual(result["reportDate"], report["as_of"])
         self.assertEqual(result["reportTimezone"], report["timezone"])

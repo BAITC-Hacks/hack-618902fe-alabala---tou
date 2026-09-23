@@ -18,7 +18,7 @@
     <div class="brand"><span class="logo">Q</span> QORIT<small>MEETING INTELLIGENCE</small></div>
     <details class="workspace">
       <summary>Рабочее пространство <span class="caret" aria-hidden="true"></span></summary>
-      <div class="workspace-menu"><strong>Основное пространство</strong><small>Аудио → сервер STT / Ollama → протокол</small></div>
+      <div class="workspace-menu"><strong>Основное пространство</strong><small>Аудио → сервер STT / llama.cpp → протокол</small></div>
     </details>
     <nav class="side-nav" aria-label="Основная навигация">
       <a class="side-active" href="#protocol" data-view="protocol">◉ <span>Протокол встречи</span></a>
@@ -78,7 +78,7 @@
           <input id="fileInput" type="file" accept=".mp3,.wav,.flac,.ogg,.m4a,.webm" hidden>
         </div>
       </div>
-      <p class="notice">Кнопка «Распознать аудио» отправит запись на сервер, с которого открыта эта страница. Он выполняет STT, диаризацию и извлечение поручений через настроенную Ollama. Проверьте, что администратор настроил модели внутри вашего защищённого контура.</p>
+      <p class="notice">Кнопка «Распознать аудио» отправит запись на сервер, с которого открыта эта страница. Он выполняет STT, диаризацию и извлечение поручений через Gemma Q6_K в llama.cpp. Проверьте, что администратор настроил модели внутри вашего защищённого контура.</p>
       <div class="backend-status"><p id="apiStatus" class="muted" role="status">Проверяю доступность API…</p><button id="checkApi" class="secondary" type="button">Проверить API</button></div>
       <div class="meeting-fields">
         <label>Тема совещания<input id="meetingTitle" type="text" maxlength="160" value="Протокол совещания"></label>

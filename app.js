@@ -460,7 +460,7 @@
     $('#summaryLabel').textContent = result.method === 'server' ? 'СВОДКА ОТВЕТА СЕРВЕРА' : 'КРАТКОЕ САММАРИ · ПРАВИЛА';
     $('#analysisOrigin').textContent = result.method === 'server'
       ? 'Источник поручений: сервер · ' + (result.analysisMethod || 'метод не указан') + '. Исходный отчёт: ' + (result.reportDate || 'дата не указана') + '. Ручные правки сохраняются только в браузере.'
-      : 'Источник: локальные языковые правила в браузере, без запроса к Ollama.';
+      : 'Источник: локальные языковые правила в браузере, без запроса к llama.cpp.';
     for (const [key, listId, titleId] of [
       ['highlights', '#summaryHighlights', '#highlightsTitle'],
       ['decisions', '#summaryDecisions', '#decisionsTitle']
