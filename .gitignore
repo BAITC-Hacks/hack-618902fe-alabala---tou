@@ -10,7 +10,6 @@ htmlcov/
 
 # Generated meeting transcripts
 results/
-models/
 .runtime/
 
 # Virtual environments
@@ -19,11 +18,6 @@ models/
 venv/
 env/
 ENV/
-
-# Local environment variables and secrets
-.env
-.env.*
-!.env.example
 
 # IDE and operating system files
 .idea/
