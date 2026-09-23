@@ -1,0 +1,7 @@
+# HTTP API and report export, independent of the GPU dependency stack.
+Flask>=3.1,<4
+waitress>=3,<4
+python-dotenv>=1,<2
+reportlab>=4,<5
+python-docx>=1.1,<2
+tzdata>=2024.1

@@ -3,7 +3,11 @@
 !Dockerfile.nemo
 !requirements.txt
 !requirements-nemo.txt
+!requirements-server.txt
 !local_models.py
 !speaker_diarization.py
 !stt_kazakh_russian.py
 !test.py
+!server.py
+!meeting_analysis.py
+!report_exports.py

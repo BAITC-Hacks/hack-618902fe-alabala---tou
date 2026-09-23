@@ -12,7 +12,7 @@ venv_dir=/opt/qorit-nemo
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y python3.12-venv build-essential ffmpeg libsndfile1 sox
+apt-get install -y python3.12-venv build-essential ffmpeg libsndfile1 sox fonts-dejavu-core
 python3.12 -m venv "$venv_dir"
 "$venv_dir/bin/python" -m pip install --upgrade pip setuptools wheel
 "$venv_dir/bin/python" -m pip install -r "$project_dir/requirements-nemo.txt"

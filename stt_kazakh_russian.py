@@ -108,6 +108,15 @@ def _load_model(device: torch.device):
     return model, tokens, max(tokens) + 1  # CTC blank token is the final index
 
 
+def release_models() -> None:
+    """Release cached ASR weights before another local model uses the GPU."""
+    with _TRANSCRIBE_LOCK:
+        _load_model.cache_clear()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 def _predict_ids(model, wav: np.ndarray, device: torch.device) -> list[int]:
     # Keep all GPU tensors in this frame, so even an OOM can release them before
     # retrying. Only the small list of token IDs leaves the function.
