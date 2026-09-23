@@ -16,7 +16,7 @@
   const escapeRE = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const lower = value => value.toLocaleLowerCase('ru').replace(/ё/g, 'е');
   const shorten = (text, limit) => text.length <= limit ? text : text.slice(0, limit).replace(/\s+\S*$/, '') + '…';
-  const isUnknown = name => !name || /^(?:не указан|неизвест|участник\s*\d*|speaker\s*\d*)$/i.test(name);
+  const isUnknown = name => !compact(name) || /^(?:не\s+указан(?:а)?|не\s+определ[её]н(?:а)?|неизвест(?:ен|на|ный|ная)?(?:\s+(?:участник|спикер|говорящий))?|(?:участник|спикер|говорящий|speaker)[\s_#-]*\d*|unknown|undefined|null|none|[—–?-])$/iu.test(compact(name));
   const HEADER = /^(?:тема|дата|время|повестка|протокол|текст совещания|саммари|итоги|поручения|ответственный|срок|решение|summary|transcript)$/i;
 
   function sentenceParts(text) {
@@ -39,8 +39,14 @@
     if (Array.isArray(input)) {
       const utterances = input.filter(item => item && compact(item.text)).map(item => {
         const speaker = compact(item.speaker) || UNKNOWN;
-        if (!isUnknown(speaker)) people.set(speaker, compact(item.role) || 'Указан в расшифровке');
-        return {time: compact(item.time) || '—', speaker, text: compact(item.text)};
+        if (speaker !== UNKNOWN) people.set(speaker, compact(item.role) || (isUnknown(speaker) ? 'Говорящий не сопоставлен с человеком' : 'Указан в расшифровке'));
+        const timing = typeof item.start === 'number' && typeof item.end === 'number'
+          && Number.isFinite(item.start) && Number.isFinite(item.end) && item.start >= 0 && item.end >= item.start
+          ? {start: item.start, end: item.end} : {};
+        const original = typeof item.originalSpeaker === 'string' && item.originalSpeaker.trim()
+          && item.originalSpeaker.length <= 80 && !/[\r\n\u0000-\u001F\u007F]/u.test(item.originalSpeaker)
+          ? {originalSpeaker: compact(item.originalSpeaker)} : {};
+        return {time: compact(item.time) || '—', speaker, text: compact(item.text), ...timing, ...original};
       });
       return {utterances, people};
     }
@@ -57,7 +63,7 @@
       names.add(name);
       roles.set(name, compact(match[2]));
     }
-    const lineLabel = new RegExp(`^\\s*(?:\\[?(\\d{1,2}:\\d{2}(?::\\d{2})?)\\]?\\s+)?(${WORD}(?:\\s+${WORD}){0,2}|Участник\\s+\\d+|SPEAKER_\\d+)\\s*[:：]\\s*`, 'gmu');
+    const lineLabel = new RegExp(`^\\s*(?:\\[?(\\d{1,2}:\\d{2}(?::\\d{2})?)\\]?\\s+)?(${WORD}(?:\\s+${WORD}){0,2}|Участник\\s+\\d+|SPEAKER_\\d+|Не\\s+указан)\\s*[:：]\\s*`, 'gmu');
     for (const match of text.matchAll(lineLabel)) if (!HEADER.test(match[2])) names.add(compact(match[2]));
     const standaloneLabel = new RegExp(`^[ \\t]*(?:\\[?\\d{1,2}:\\d{2}(?::\\d{2})?\\]?[ \\t]+)?(${WORD}(?:[ \\t]+${WORD}){0,2})[ \\t]*$`, 'gmu');
     for (const match of text.matchAll(standaloneLabel)) {
@@ -91,7 +97,7 @@
       const time = /(\d{1,2}:\d{2}(?::\d{2})?)/.exec(precedingLine)?.[1] || '—';
       const name = compact(match[0]);
       labels.push({at: atLineStart ? at - precedingLine.length : at, end, name, time});
-      people.set(name, roles.get(name) || (role && compact(role[1])) || 'Указан в расшифровке');
+      if (name !== UNKNOWN) people.set(name, roles.get(name) || (role && compact(role[1])) || (isUnknown(name) ? 'Говорящий не сопоставлен с человеком' : 'Указан в расшифровке'));
     }
     if (!labels.length) {
       warnings.push('Имена встречаются в тексте, но явные границы реплик не найдены.');
@@ -220,8 +226,11 @@
   function inferOwner(clause, sentence, utterance, index, utterances, people, addressee) {
     const explicit = explicitOwner(clause, people) || (!/^(?:а\s+)?вы\s/iu.test(clause) && explicitOwner(sentence, people));
     if (explicit) return {owner: explicit, assignmentBasis: 'Имя явно указано в поручении', inferred: false};
-    if (SELF_ACTION.test(clause) && !isUnknown(utterance.speaker)) {
-      return {owner: utterance.speaker, assignmentBasis: 'Обязательство от первого лица', inferred: false};
+    if (SELF_ACTION.test(clause)) {
+      const anonymous = isUnknown(utterance.speaker);
+      return {owner: utterance.speaker, assignmentBasis: anonymous
+        ? 'Обязательство говорящего от первого лица; личность не установлена'
+        : 'Обязательство от первого лица', inferred: anonymous};
     }
     const next = utterances.slice(index + 1, index + 3).find(item => item.speaker !== utterance.speaker && !isUnknown(item.speaker));
     const previous = utterances.slice(Math.max(0, index - 2), index).reverse().find(item => item.speaker !== utterance.speaker && !isUnknown(item.speaker));
@@ -289,7 +298,7 @@
           tasks.push({
             id: '', title: taskTitle(clause, owner.owner), owner: owner.owner, due, status: 'В работе',
             source: clause, sourceIndex,
-            needsReview: owner.inferred || due === UNKNOWN || matches.length > 1 || contractual,
+            needsReview: owner.inferred || isUnknown(owner.owner) || due === UNKNOWN || matches.length > 1 || contractual,
             assignmentBasis: owner.assignmentBasis + (contractual ? '. Срок в условии договора не принят за срок исполнения поручения' : '')
           });
         }
@@ -332,7 +341,7 @@
       [/инвестпрограмм|инвестици|освоени\S*\s+(?:\d+%\s+)?(?:от\s+)?(?:планов\S*\s+)?бюджет/iu, 'выполнение инвестиционной программы'],
       [/сертификат|переаттестаци|охраны\s+труда|промбезопасност/iu, 'обучение и безопасность персонала'],
       [/подрядчик|договор\S*\s+(?:работ|услов|срок)|счета\s+с\s+задержк/iu, 'сроки и условия работы с подрядчиками'],
-      [/тестирован|регрессионн|чек-лист|запуск\S*\s+личного\s+кабинета/iu, 'готовность продукта и тестирование']
+      [/тестирован|регрессионн|запуск\S*\s+личного\s+кабинета/iu, 'готовность продукта и тестирование']
     ].filter(([pattern]) => pattern.test(corpus)).map(([, label]) => label);
     const parts = themes.length ? ['Обсудили ' + themes.join(', ') + '.'] : [];
     if (!parts.length && decisions.length) parts.push(...decisions.slice(0, 1));
@@ -351,6 +360,7 @@
     const summary = summarize(utterances, tasks);
     if (tasks.some(task => /Предположение/.test(task.assignmentBasis))) warnings.push('Часть ответственных предположена по контексту диалога. Подтвердите их перед выдачей поручений.');
     if (tasks.some(task => task.owner === UNKNOWN)) warnings.push('В части поручений ответственный не указан.');
+    if (tasks.some(task => task.owner !== UNKNOWN && isUnknown(task.owner))) warnings.push('Метки говорящих не являются именами людей. Сопоставьте их с участниками и подтвердите поручения.');
     if (tasks.some(task => task.due === UNKNOWN)) warnings.push('В части поручений не указан срок. Относительные сроки сохранены как в исходном тексте.');
     if (!tasks.length && utterances.length) warnings.push('Явные поручения не найдены. Локальные правила могут пропускать неявные формулировки.');
     return {

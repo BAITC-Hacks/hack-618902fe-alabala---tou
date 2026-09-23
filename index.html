@@ -5,9 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>QORIT — умный протокол</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="styles.css?v=7">
-  <script src="transcript-analyzer.js?v=7" defer></script>
-  <script src="app.js?v=7" defer></script>
+  <link rel="stylesheet" href="styles.css?v=8">
+  <script src="transcript-analyzer.js?v=8" defer></script>
+  <script src="meeting-utils.js?v=8" defer></script>
+  <script src="protocol-storage.js?v=8" defer></script>
+  <script src="protocol-export.js?v=8" defer></script>
+  <script src="app.js?v=8" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -33,10 +36,12 @@
       <div class="meeting-card stopped">
         <div class="live" id="recordStatus" role="status">Микрофон выключен</div>
         <b id="recordTimer">00:00:00</b>
-        <small>Запись начинается после разрешения микрофона</small>
+        <small>Запись микрофона остаётся на этом устройстве</small>
         <div class="wave" aria-hidden="true"></div>
+        <label class="consent"><input id="recordConsent" type="checkbox"> Я уведомил участников о записи и обработке и получил необходимое согласие</label>
         <button class="stop" id="recordBtn" type="button">● Начать запись</button>
         <a class="record-download" id="recordDownload" hidden>Скачать запись</a>
+        <audio id="recordPlayer" controls hidden aria-label="Прослушать выбранную запись"></audio>
       </div>
     </section>
     <nav class="tabs" role="tablist" aria-label="Результаты встречи">
@@ -44,18 +49,40 @@
       <button id="tab-tasks" data-tab="tasks" role="tab" aria-controls="tasks" aria-selected="false" tabindex="-1">✓ &nbsp; Поручения <span id="taskCount">0</span></button>
       <button id="tab-people" data-tab="people" role="tab" aria-controls="people" aria-selected="false" tabindex="-1">◉ &nbsp; Участники</button>
     </nav>
+    <div class="reminder-banner" id="reminderBanner" hidden>
+      <p id="reminderText" role="status" aria-live="polite"></p>
+      <button class="secondary" id="viewReminders" type="button">Показать поручения</button>
+    </div>
+    <details class="draft-tools">
+      <summary>Сохранение и перенос черновика</summary>
+      <p class="muted">По умолчанию данные находятся только в памяти вкладки. JSON содержит весь протокол и имена — храните его в защищённом месте. Запись в черновик не входит.</p>
+      <label class="consent"><input id="persistDraft" type="checkbox"> Сохранять текст и правки в этом браузере (без шифрования)</label>
+      <div class="actions">
+        <button class="secondary" id="saveDraft" type="button">↓ Сохранить JSON</button>
+        <button class="secondary" id="openDraft" type="button">↑ Открыть черновик</button>
+        <input id="draftInput" type="file" accept=".json,application/json" hidden>
+        <button class="secondary" id="forgetDraft" type="button">Удалить сохранённую копию</button>
+      </div>
+      <p id="storageStatus" class="muted" role="status">Автосохранение выключено.</p>
+    </details>
 
     <section id="protocol" class="tab-content active" role="tabpanel" aria-labelledby="tab-protocol">
       <div class="toolbar">
         <div><p class="section-label">ПРОТОКОЛ СОВЕЩАНИЯ</p><h2>Разбор расшифровки</h2><p class="muted">Исходный текст сохраняется в поле ниже</p></div>
         <div class="actions">
           <button class="secondary" id="loadDemo" type="button">↻ Пример встречи</button>
+          <button class="secondary" id="importBtn" type="button">↑ TXT / JSON STT</button>
+          <input id="transcriptInput" type="file" accept=".txt,.json,text/plain,application/json" hidden>
           <button class="secondary" id="uploadBtn" type="button">↑ Аудио / видео</button>
           <input id="fileInput" type="file" accept="audio/*,video/*" hidden>
           <button class="primary" id="analyzeBtn" type="button" disabled>✦ Обработать текст</button>
         </div>
       </div>
-      <p class="notice">Текст обрабатывается локально по языковым правилам. Это черновик: проверьте поручения по исходным репликам. Аудиораспознавание к этому экрану пока не подключено.</p>
+      <p class="notice">Текст обрабатывается локально по языковым правилам, без LLM. Проверьте поручения по исходным репликам. Серверный маршрут аудио пока возвращает заглушку, поэтому аудио не отправляется. Можно импортировать TXT или JSON, полученный настоящим локальным STT.</p>
+      <div class="meeting-fields">
+        <label>Тема совещания<input id="meetingTitle" type="text" maxlength="160" value="Протокол совещания"></label>
+        <label>Дата совещания<input id="meetingDate" type="date"></label>
+      </div>
       <div class="transcript-editor">
         <label for="manualTranscript">Исходная расшифровка</label>
         <textarea id="manualTranscript" class="manual-transcript" maxlength="200000" placeholder="Вставьте текст совещания. Например:&#10;Данияр Серикович: Ерлан, подготовь претензию до пятницы.&#10;Ерлан: Хорошо, подготовлю." aria-describedby="transcriptHelp"></textarea>
@@ -69,7 +96,7 @@
           <div id="summaryText">После обработки здесь появятся ключевые вопросы и решения.</div>
           <h3 id="highlightsTitle" hidden>Ключевые вопросы</h3>
           <ul id="summaryHighlights"></ul>
-          <h3 id="decisionsTitle" hidden>Зафиксированные действия</h3>
+          <h3 id="decisionsTitle" hidden>Решения из расшифровки</h3>
           <ul id="summaryDecisions"></ul>
           <p id="analysisWarnings" class="review-note"></p>
         </article>
@@ -85,14 +112,19 @@
     <section id="tasks" class="tab-content" role="tabpanel" aria-labelledby="tab-tasks" hidden>
       <div class="toolbar">
         <div><p class="section-label">КОНТРОЛЬ ИСПОЛНЕНИЯ</p><h2>Поручения</h2><p class="muted">Сверьте цитату, уточните ответственного и срок</p></div>
-        <div class="actions"><button class="secondary" data-export="docx" type="button">↓ DOCX</button><button class="primary" data-export="pdf" type="button">↓ PDF</button></div>
+        <div class="actions"><button class="secondary" id="addTask" type="button" disabled>+ Поручение</button><button class="secondary" data-export="docx" type="button" disabled>↓ DOCX</button><button class="primary" data-export="pdf" type="button" disabled>Печать / PDF</button></div>
       </div>
+      <p class="muted">Для напоминаний укажите точную дату. Относительные сроки («до пятницы», «за неделю») автоматически в дату не переводятся. Напоминания работают в открытой вкладке, без рассылки.</p>
+      <div id="taskDashboard" class="analysis-stats task-dashboard" hidden></div>
+      <label class="task-filter">Показать<select id="taskFilter"><option value="all">Все поручения</option><option value="overdue">Просрочено</option><option value="upcoming">Срок в ближайшие 3 дня</option><option value="working">В работе</option><option value="done">Выполнено</option><option value="undated">Без точной даты</option><option value="review">Требуют проверки</option></select></label>
+      <p id="taskStatus" class="muted" role="status"></p>
+      <button id="undoTask" class="secondary" type="button" hidden>Вернуть исключённое поручение</button>
       <div id="taskList" class="task-list"><p class="empty-state">Сначала обработайте расшифровку.</p></div>
       <p id="exportStatus" class="muted" role="status"></p>
     </section>
     <section id="people" class="tab-content" role="tabpanel" aria-labelledby="tab-people" hidden>
       <p class="section-label">ГОВОРЯЩИЕ В ТЕКСТЕ</p><h2>Участники совещания</h2>
-      <p class="muted">Разделение по текстовым меткам говорящих; голосовая диаризация не выполняется.</p>
+      <p class="muted">Имена берутся из текстовых меток или импортированных сегментов STT. Укажите, кому соответствует каждый SPEAKER_00. Это ручная привязка, не голосовая идентификация. Проверьте изменённые поручения.</p>
       <div id="peopleList" class="people-list"></div>
     </section>
   </main>
