@@ -1,2 +1,4 @@
 # WSL/Linux setup scripts must retain Unix line endings on Windows checkouts.
 *.sh text eol=lf
+# The Windows entry point must work when opened from Explorer.
+*.cmd text eol=crlf

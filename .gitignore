@@ -11,6 +11,7 @@ htmlcov/
 # Generated meeting transcripts
 results/
 models/
+.runtime/
 
 # Virtual environments
 .venv/
