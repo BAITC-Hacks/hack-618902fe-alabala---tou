@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 from stt_kazakh_russian import transcribe
 
@@ -18,8 +19,17 @@ def main() -> None:
     for audio_path in audio_files:
         print(f"\n=== {audio_path.name} ===")
         try:
-            print(transcribe(audio_path))
+            text = transcribe(
+                audio_path,
+                progress=lambda done, total: print(
+                    f"\r{done:.1f} / {total:.1f} s ({100 * done / total:.0f}%)",
+                    end="", file=sys.stderr, flush=True,
+                ),
+            )
+            print(file=sys.stderr)
+            print(text)
         except Exception as exc:
+            print(file=sys.stderr)
             print(f"Ошибка при обработке файла: {exc}")
 
 

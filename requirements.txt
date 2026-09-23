@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+# CUDA-enabled PyTorch build for the RTX 5050
+torch==2.14.0+cu130
+
+# Project dependencies
+Flask
+huggingface_hub
+librosa
+numpy
+soundfile

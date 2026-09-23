@@ -10,8 +10,7 @@ fresh environment with an installed Python 3.10–3.14 (3.12 recommended):
 ```powershell
 py -3.12 -m venv .venv-gpu
 .\.venv-gpu\Scripts\python.exe -m pip install --upgrade pip
-.\.venv-gpu\Scripts\python.exe -m pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu130
-.\.venv-gpu\Scripts\python.exe -m pip install huggingface_hub soundfile librosa
+.\.venv-gpu\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 If `py -3.12` is unavailable, install Python 3.12 or replace it with the path
@@ -39,3 +38,50 @@ Run transcription with the GPU:
 The model downloads from Hugging Face on first use. GPU execution is the
 default. For a CPU run, set `$env:STT_DEVICE = 'cpu'` before running the
 script. Clear it with `Remove-Item Env:STT_DEVICE` to use the GPU again.
+
+## Long recordings and 8 GB VRAM
+
+`transcribe(path)` now reads and processes the recording in sequence, using
+10 seconds of new audio plus up to 1 second of context on each side. The full
+waveform is never loaded into RAM or VRAM. Only the resulting text grows with
+recording length. The model remains FP32, with one window per inference call.
+
+Overlapping predictions are trimmed before CTC decoding, which keeps its state
+across windows. This reduces boundary artifacts without blindly concatenating
+duplicate words. Chunked recognition can still differ from full-file recognition;
+listen to/check words around joins when accuracy matters.
+
+Both `test.py` and the single-file CLI display progress. For smaller windows:
+
+```powershell
+python .\stt_kazakh_russian.py ".\media\Совещание №1.mp3" --chunk-seconds 5 --overlap-seconds 0.5
+```
+
+Or from Python:
+
+```python
+text = transcribe("meeting.wav", chunk_seconds=5, overlap_seconds=0.5)
+```
+
+Chunk size must be at least 1 second; overlap must be non-negative and smaller
+than half the chunk size. CUDA OOM during inference automatically halves both
+the chunk and its context, down to 1 second of new audio, and retries from the
+same position. Other errors are not hidden. If even that fails, stop other GPU
+jobs and restart the script, or run with `$env:STT_DEVICE = 'cpu'`. OOM during
+model loading still requires freeing VRAM; shortening audio cannot fix that.
+
+Run one transcription process at a time on this GPU. Calls within one process
+are serialized and share a lazily loaded model; separate Python processes each
+allocate their own model and working memory. After an earlier OOM, terminate
+the old run before starting another. `torch.cuda.empty_cache()` only releases
+unused cached allocations in the current process, not live tensors or memory
+owned by other processes. Allocator tuning does not make an oversized forward
+pass fit into 8 GB.
+
+Only formats supported by the installed SoundFile/libsndfile can be read
+(including MP3 in recent builds). Convert unsupported formats such as M4A to
+WAV/FLAC first.
+
+References: [model card and recommended chunk lengths](https://huggingface.co/alibiserikbay/kazakh-russian-mixed-stt),
+[CTC chunking with overlap](https://huggingface.co/blog/asr-chunking),
+[PyTorch CUDA memory management](https://docs.pytorch.org/docs/stable/notes/cuda.html#memory-management).
