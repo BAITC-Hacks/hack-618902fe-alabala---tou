@@ -19,7 +19,7 @@ test('flat real-world dialogue yields named turns, evidence, deadlines and issue
   assert.equal(claim?.owner, 'Ерлан');
   assert.equal(claim?.due, 'до конца недели');
   assert.equal(claim?.needsReview, false);
-  const supplier = result.tasks.find(task => /поставщик/i.test(task.title));
+  const supplier = result.tasks.find(task => /поставщик/i.test(task.title) && task.due === 'за две недели');
   assert.equal(supplier?.owner, 'Ботагоз Нурлановна');
   assert.equal(supplier?.due, 'за две недели');
   assert.equal(supplier?.needsReview, true);
@@ -30,6 +30,10 @@ test('flat real-world dialogue yields named turns, evidence, deadlines and issue
   assert.ok(!result.utterances.some(item => item.text.includes('Саммари по ключевым пунктам')));
   assert.ok(result.warnings.some(item => item.includes('исключены')));
   assert.ok(result.tasks.every(task => task.source && result.utterances[task.sourceIndex]));
+  assert.ok(supplier.title.startsWith('Найти альтернативного поставщика'));
+  assert.ok(result.tasks.some(task => task.title.startsWith('Привлечь внешнего')));
+  assert.ok(result.tasks.some(task => task.title.startsWith('Подготовить краткую справку')));
+  assert.ok(!result.decisions.some(text => text.includes('И мне по итогам')));
 });
 
 test('different input produces different result and an unknown owner is never invented', () => {
@@ -53,6 +57,12 @@ test('line labels, timestamps, named addressees and first-person commitments are
   assert.ok(result.tasks.every(task => !task.needsReview));
 });
 
+test('speaker names on separate lines do not require a colon', () => {
+  const result = analyzeTranscript('Анна Иванова\nИван, подготовь отчёт до пятницы.\nИван Петров\nОтправлю презентацию завтра.');
+  assert.deepEqual(result.utterances.map(item => item.speaker), ['Анна Иванова', 'Иван Петров']);
+  assert.ok(result.tasks.every(task => task.owner === 'Иван Петров'));
+});
+
 test('Russian, Kazakh and mixed commitments are analyzed without external services', () => {
   const result = analyzeTranscript([
     {time: '01:00', speaker: 'Айжан', text: 'Есепті жұмаға дейін дайындаймын.'},
@@ -73,6 +83,15 @@ test('multiple actions retain separate deadlines; missing deadlines stay unknown
   const result = analyzeTranscript('Анна: Иван, подготовь отчёт до пятницы, отправь презентацию завтра, обнови шаблон договора.\nИван: Принял.');
   assert.equal(result.tasks.length, 3);
   assert.deepEqual(result.tasks.map(task => task.due), ['до пятницы', 'завтра', 'Не указан']);
+  assert.ok(result.tasks.every(task => task.owner === 'Иван'));
+});
+
+test('deduplication preserves different concrete objects and deadlines', () => {
+  const result = analyzeTranscript('Анна: Иван, подготовь смету по заводу до пятницы, подготовь смету по школе до понедельника. Подготовь смету по заводу до понедельника. Подготовь смету по заводу до пятницы.\nИван: Хорошо, сделаю.');
+  assert.equal(result.tasks.length, 3);
+  assert.ok(result.tasks.some(task => task.title === 'Подготовить смету по заводу' && task.due === 'до пятницы'));
+  assert.ok(result.tasks.some(task => task.title === 'Подготовить смету по школе' && task.due === 'до понедельника'));
+  assert.ok(result.tasks.some(task => task.title === 'Подготовить смету по заводу' && task.due === 'до понедельника'));
   assert.ok(result.tasks.every(task => task.owner === 'Иван'));
 });
 

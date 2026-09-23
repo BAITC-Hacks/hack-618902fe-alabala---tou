@@ -59,6 +59,10 @@
     }
     const lineLabel = new RegExp(`^\\s*(?:\\[?(\\d{1,2}:\\d{2}(?::\\d{2})?)\\]?\\s+)?(${WORD}(?:\\s+${WORD}){0,2}|Участник\\s+\\d+|SPEAKER_\\d+)\\s*[:：]\\s*`, 'gmu');
     for (const match of text.matchAll(lineLabel)) if (!HEADER.test(match[2])) names.add(compact(match[2]));
+    const standaloneLabel = new RegExp(`^[ \\t]*(?:\\[?\\d{1,2}:\\d{2}(?::\\d{2})?\\]?[ \\t]+)?(${WORD}(?:[ \\t]+${WORD}){0,2})[ \\t]*$`, 'gmu');
+    for (const match of text.matchAll(standaloneLabel)) {
+      if (!HEADER.test(match[1]) && !/^(?:Коллеги|Хорошо|Спасибо|Здравствуйте|Добрый День|Жақсы)$/u.test(match[1])) names.add(compact(match[1]));
+    }
 
     if (!names.size) {
       warnings.push('В тексте нет явных меток говорящих. Имена участников нельзя восстановить по голосу из текста.');
@@ -246,24 +250,23 @@
       [/привлек(?:и|ите|у|ут)|привлеч(?:ёт|ет|ём|ем)/iu, 'Привлечь'], [/дам/iu, 'Предоставить']
     ];
     for (const [pattern, replacement] of infinitives) {
-      const anchored = new RegExp(`^${pattern.source}(?=\\s|$)`, 'iu');
+      const anchored = new RegExp(`^(?:${pattern.source})(?=\\s|$)`, 'iu');
       if (anchored.test(title)) { title = title.replace(anchored, replacement); break; }
+    }
+    if (NOMINAL.test(clause) && /справку/iu.test(clause)) {
+      title = 'Подготовить ' + (/короткую/iu.test(clause) ? 'краткую ' : '') + 'справку'
+        + (/по итогам\s+(?:этого\s+)?совещания/iu.test(clause) ? ' по итогам совещания' : '')
+        + (/с подрядчиками/iu.test(clause) ? ' с подрядчиками' : '');
     }
     return shorten(title.charAt(0).toLocaleUpperCase('ru') + title.slice(1), 280);
   }
 
   function taskKey(task) {
-    const title = lower(task.title);
-    const anchors = [
-      ['претенз', 'претензия'], ['справк', 'справка'], ['смет', 'смета'],
-      ['уведомлен', 'уведомление'], ['шаблон', 'шаблон'], ['график', 'график'],
-      ['тренер', 'тренер'], ['групп', 'группы']
-    ];
-    let key = anchors.find(([stem]) => title.includes(stem))?.[1];
-    if (!key && /поставщик/.test(title) && /най|ищ|поиск/.test(title)) key = 'поиск поставщика';
-    if (!key && /совещан/.test(title) && /собер|организ|провед/.test(title)) key = 'совещание';
-    if (!key) key = title.replace(/[.,!?]/g, '').replace(/^(?:нужно|надо|необходимо|прошу|поручаю)\s+/u, '');
-    return lower(task.owner) + '|' + key;
+    // Matching a noun alone would lose separate estimates, suppliers or reports.
+    // Only merge repeated instructions with the same explicit object and deadline.
+    const key = lower(task.title).replace(/[.,!?]/g, '')
+      .replace(/^(?:нужно|надо|необходимо|прошу|поручаю)\s+/u, '');
+    return [lower(task.owner), compact(key), lower(task.due)].join('|');
   }
 
   function extractTasks(utterances, people) {
@@ -319,7 +322,9 @@
     });
     const chosen = candidates.sort((a, b) => b.score - a.score).filter((candidate, index, all) => all.findIndex(item => lower(item.sentence) === lower(candidate.sentence)) === index).slice(0, 5).sort((a, b) => a.sourceIndex - b.sourceIndex);
     const highlights = chosen.map(item => shorten(item.sentence, 270));
-    const decisions = utterances.flatMap(item => sentenceParts(item.text)).filter(sentence => /(?:^|\s)(?:решили|согласовали|утвердили|договорились|келістік|шешім)/iu.test(sentence) && !/\?|не\s+(?:решили|согласовали|утвердили|договорились)|если\s+бы/iu.test(sentence)).slice(0, 4).map(text => shorten(text, 240));
+    const decisions = utterances.flatMap(item => sentenceParts(item.text)).filter(sentence => /(?:^|\s)(?:решили|согласовали|утвердили|договорились|келістік|шешім)/iu.test(sentence)
+      && !/\?|не\s+(?:решили|согласовали|утвердили|договорились)|если\s+бы|что\s+(?:решили|согласовали|утвердили)/iu.test(sentence)
+      && !hasDirective(sentence)).slice(0, 4).map(text => shorten(text, 240));
     const corpus = utterances.map(item => item.text).join(' ');
     const themes = [
       [/выпуск\s+продукц|производственн\S*\s+показател/iu, 'производственные показатели'],
@@ -330,7 +335,8 @@
       [/тестирован|регрессионн|чек-лист|запуск\S*\s+личного\s+кабинета/iu, 'готовность продукта и тестирование']
     ].filter(([pattern]) => pattern.test(corpus)).map(([, label]) => label);
     const parts = themes.length ? ['Обсудили ' + themes.join(', ') + '.'] : [];
-    if (decisions.length) parts.push(...decisions.slice(0, 1));
+    if (!parts.length && decisions.length) parts.push(...decisions.slice(0, 1));
+    if (!parts.length && highlights.length) parts.push('В расшифровке отмечены рабочие показатели и проблемные вопросы. Ключевые факты приведены ниже.');
     if (!parts.length && tasks.length) {
       parts.push('Основные действия: ' + tasks.slice(0, 3).map(task => shorten(task.title, 100)).join('; ') + '.');
     }
