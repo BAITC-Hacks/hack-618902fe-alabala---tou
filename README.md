@@ -1,182 +1,214 @@
-<<<<<<< HEAD
-# hack-618902fe-alabala---tou
-Hackathon team repository for Alabala - ToU
+# Локальное распознавание русского и казахского + NVIDIA NeMo
 
-## Speech recognition on RTX 5050 (Windows PowerShell)
+Конвейер: `аудио → NeMo (голоса и интервалы) → rukk STT → реплики с таймкодами`.
+STT использует прежнюю модель смешанной русско-казахской речи. Диаризация —
+**NVIDIA NeMo ClusteringDiarizer: multilingual MarbleNet + TitaNet Large**.
+Регистрация, `HF_TOKEN`, `hf auth login` и подтверждение доступа к моделям не нужны.
 
-The project uses the matching `torch==2.11.0+cu130` and
-`torchaudio==2.11.0+cu130` wheels, as listed in the
-[official PyTorch installation instructions](https://pytorch.org/get-started/previous-versions/#v2110).
-TorchAudio 2.14.0 is unavailable. If PyTorch 2.14.0 is already installed,
-`python -m pip install --upgrade -r requirements.txt` replaces it with 2.11.0
-and installs the matching TorchAudio release, keeping CUDA 13.0 support.
+## Локальные данные и модели
 
-The existing `.venv` may be unusable if its Python installation was removed. It
-also contains a CPU-only PyTorch build (`torch.version.cuda` is `None`). Create a
-fresh environment with an installed Python 3.10–3.14 (3.12 recommended):
+Обработка читает веса только из `models/`. Автоматического скачивания при
+распознавании нет: при отсутствии файла программа сообщает, что нужно подготовить.
+Флаги offline/отключения телеметрии задаются до импорта ML-библиотек.
+`prepare_models.py` — отдельная команда подготовки; она не читает аудио, результаты
+или `.env`, не использует токены и ничего из проекта не загружает на серверы.
 
-```powershell
-py -3.12 -m venv .venv-gpu
-.\.venv-gpu\Scripts\python.exe -m pip install --upgrade pip
-.\.venv-gpu\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-If `py -3.12` is unavailable, install Python 3.12 or replace it with the path
-to an installed Python executable. Select `.venv-gpu\Scripts\python.exe` as
-the interpreter in VS Code.
-
-Verify that PyTorch sees the GPU before loading the model:
+Один раз подготовьте модели на компьютере с интернетом (можно на другом):
 
 ```powershell
-.\.venv-gpu\Scripts\python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CUDA unavailable')"
+# Из корня проекта; используется уже существующий Python.
+.\.venv\Scripts\python.exe prepare_models.py --download
 ```
 
-The version should contain `+cu130`, and `torch.cuda.is_available()` must
-print `True`. The application requires CUDA for both speech recognition and
-diarization. `nvidia-smi` reporting a CUDA version only confirms driver
-support; it does not mean the installed PyTorch has CUDA enabled.
+Скрипт использует публичные ссылки NVIDIA NGC и Hugging Face. Уже имеющиеся файлы
+не скачиваются повторно; STT берётся из локального HF-кэша, если там есть нужная
+версия. При необходимости укажите `--hf-cache ПУТЬ_К_КЭШУ_HUB`.
+Скачивание идёт во временный файл, затем проверяется формат архива. Для переноса
+можно сравнить печатаемые SHA256. Эти суммы не являются подписью издателя.
 
-Run transcription with the GPU:
+```text
+models/
+  asr/rukk/model.pt
+  asr/rukk/tokens.lst
+  diarization/marblenet.nemo
+  diarization/titanet_large.nemo
+```
+
+Для полностью отключённого компьютера скопируйте эту папку и заранее подготовленную
+среду или Docker-образ. Пакеты Python также нужно установить заранее.
+Команда ниже только проверяет файлы на диске, без сетевых запросов:
+
+```bash
+python prepare_models.py --check
+```
+
+Другой каталог задаётся переменной окружения `LOCAL_MODELS_DIR` и аргументом
+`--models-dir` у скрипта подготовки. Относительные пути считаются от корня проекта.
+CLI не читает `.env`; переменные для CLI нужно экспортировать в оболочке.
+
+## Windows: запуск NeMo через WSL2
+
+**NeMo не поддерживает нативный Windows Python.** Используйте Linux/WSL2 на этом
+же компьютере с доступом к NVIDIA GPU. Windows `.venv` нельзя использовать как
+Linux-окружение. Распознавание без диаризации может по-прежнему работать в Windows.
+
+В этом рабочем окружении уже установлена Ubuntu 24.04. Для автоматической подготовки
+отдельного окружения `/opt/qorit-nemo` используется команда из PowerShell:
 
 ```powershell
-.\.venv-gpu\Scripts\python.exe .\test.py
-# Or transcribe one recording:
-.\.venv-gpu\Scripts\python.exe .\stt_kazakh_russian.py ".\media\Совещание №1.mp3"
+wsl -d Ubuntu-24.04 -u root --cd "$PWD" --exec bash setup_nemo_wsl.sh
 ```
 
-The ASR and diarization models download from Hugging Face on first use. Both
-models always run on CUDA; there is no CPU execution fallback.
-
-## Long recordings and 8 GB VRAM
-
-`transcribe(path)` now reads and processes the recording in sequence, using
-10 seconds of new audio plus up to 1 second of context on each side. The full
-waveform is never loaded into RAM or VRAM. Only the resulting text grows with
-recording length. The model remains FP32, with one window per inference call.
-
-Overlapping predictions are trimmed before CTC decoding, which keeps its state
-across windows. This reduces boundary artifacts without blindly concatenating
-duplicate words. Chunked recognition can still differ from full-file recognition;
-listen to/check words around joins when accuracy matters.
-
-Both `test.py` and the single-file CLI display progress. For smaller windows:
+После подготовки запускайте из PowerShell:
 
 ```powershell
-python .\stt_kazakh_russian.py ".\media\Совещание №1.mp3" --chunk-seconds 5 --overlap-seconds 0.5
+.\run_nemo.ps1
+.\run_nemo.ps1 --num-speakers 5
 ```
 
-Or from Python:
+Этот запуск использует `unshare --net`: у Python-процесса отдельное сетевое
+пространство имён без внешних интерфейсов и маршрутов. Интернет недоступен на
+уровне ОС, GPU и локальные папки остаются доступны. Launcher запускается от root
+в WSL, поскольку создание сетевого пространства требует соответствующих прав.
+Если изоляцию создать не удалось, обработка не запускается.
 
-```python
-text = transcribe("meeting.wav", chunk_seconds=5, overlap_seconds=0.5)
-```
+Далее — ручная установка для другой машины.
 
-Chunk size must be at least 1 second; overlap must be non-negative and smaller
-than half the chunk size. CUDA OOM during inference automatically halves both
-the chunk and its context, down to 1 second of new audio, and retries from the
-same position. Other errors are not hidden. If even that fails, stop other GPU
-jobs, free GPU memory, and retry. CPU inference is disabled. OOM during
-model loading still requires freeing VRAM; shortening audio cannot fix that.
-
-Run one transcription process at a time on this GPU. Calls within one process
-are serialized and share a lazily loaded model; separate Python processes each
-allocate their own model and working memory. After an earlier OOM, terminate
-the old run before starting another. `torch.cuda.empty_cache()` only releases
-unused cached allocations in the current process, not live tensors or memory
-owned by other processes. Allocator tuning does not make an oversized forward
-pass fit into 8 GB.
-
-Only formats supported by the installed SoundFile/libsndfile can be read
-(including MP3 in recent builds). Convert unsupported formats such as M4A to
-WAV/FLAC first.
-
-References: [model card and recommended chunk lengths](https://huggingface.co/alibiserikbay/kazakh-russian-mixed-stt),
-[CTC chunking with overlap](https://huggingface.co/blog/asr-chunking),
-[PyTorch CUDA memory management](https://docs.pytorch.org/docs/stable/notes/cuda.html#memory-management).
-
-## Разбивка по говорящим (диаризация)
-
-`transcribe_diarized(path)` сохраняет распознавание смешанной русско-казахской
-речи через текущую модель `rukk` и добавляет диаризацию через
-[pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1).
-Сначала определяются интервалы голосов во всей записи, затем слова STT
-сопоставляются с ними по времени. Смена говорящего или пауза больше 1,5 секунды
-начинает новую реплику. Это разбивка по голосам и паузам; пунктуация не добавляется.
-
-Для первого запуска:
-
-1. Установите обновлённые зависимости в рабочее окружение Python:
-   `python -m pip install -r requirements.txt`.
-2. Войдите в Hugging Face и примите условия на странице модели Community-1.
-3. Настройте read-токен с доступом к этой модели через `hf auth login`
-   или переменную окружения `HF_TOKEN`. Токен не нужно добавлять в исходники.
+Если Ubuntu ещё не установлена, выполните в PowerShell с правами администратора:
 
 ```powershell
-# После активации рабочего окружения Python:
-hf auth login
-python .\test.py --diarize
-# Если количество участников известно:
-python .\test.py --diarize --num-speakers 5
+wsl --install -d Ubuntu-24.04
 ```
 
-`test.py --diarize` выводит реплики с таймкодами и сохраняет результаты в
-`results/<имя аудиофайла>.json`. Папку можно задать через `--output-dir`.
-Пример формата вывода (иллюстрация, не результат обработки):
+Завершите первоначальную настройку Ubuntu; если Windows попросит — перезагрузитесь.
+Затем в терминале **Ubuntu/WSL**, с Python 3.12:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3.12-venv build-essential ffmpeg libsndfile1 sox
+python3.12 -m venv ~/venvs/qorit-nemo
+source ~/venvs/qorit-nemo/bin/activate
+cd /mnt/c/Islam/Involve/hack/hack-618902fe-alabala---tou
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements-nemo.txt
+python prepare_models.py --check
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CUDA unavailable')"
+python test.py --diarize
+# Если точно известно число говорящих:
+python test.py --diarize --num-speakers 5
+```
+
+Проект фиксирует совместимую пару `torch==2.11.0+cu130` и
+`torchaudio==2.11.0+cu130`; NeMo — `2.7.2`. Нужен поддерживающий CUDA 13 драйвер
+NVIDIA на Windows. `torch.cuda.is_available()` должен выводить `True`.
+Нейромодели выполняются на CUDA, автоматического перехода на CPU нет.
+Декодирование аудиофайлов, подготовка данных и запись результатов используют CPU.
+
+В зависимостях NeMo могут встречаться `pyannote.core` и `pyannote.metrics` — это
+структуры данных и метрики. Модели `pyannote.audio`/Community-1 и доступ к ним
+проект больше не использует.
+
+## Запуск с запрещённой сетью: Docker
+
+Для изоляции на уровне ОС используйте Linux-контейнер с **`--network none`**.
+Настройки offline в библиотеках сами по себе не являются сетевым экраном.
+Нужен Docker с поддержкой NVIDIA GPU (на Windows — Docker Desktop с WSL2).
+Подготовьте модели и соберите образ, пока есть интернет:
+
+```powershell
+docker build -f Dockerfile.nemo -t qorit-nemo .
+New-Item -ItemType Directory -Force results | Out-Null
+$projectDir = (Get-Location).Path
+docker run --rm --gpus all --network none `
+  --mount "type=bind,source=$projectDir\models,target=/app/models,readonly" `
+  --mount "type=bind,source=$projectDir\media,target=/app/media,readonly" `
+  --mount "type=bind,source=$projectDir\results,target=/app/results" `
+  qorit-nemo python test.py --diarize --num-speakers 5
+```
+
+Аудио, модели, `.env` и результаты исключены из контекста сборки `.dockerignore`.
+При обработке контейнер имеет доступ к GPU и указанным локальным папкам, сеть
+отключена. Для автоматического определения количества голосов уберите
+`--num-speakers 5`. Подготовленный образ можно перенести через `docker save` /
+`docker load` вместе с папкой моделей и запускать без интернета.
+
+## Результат и Python API
+
+`test.py --diarize` обрабатывает записи из `media/`, выводит реплики и сохраняет
+`results/<имя аудиофайла>.json`. Каталог результата задаётся `--output-dir`.
+Иллюстрация формата:
 
 ```text
 [00:01.200–00:04.500] SPEAKER_00: коллеги начинаем совещание
-[00:05.100–00:08.800] SPEAKER_01: по нашему направлению план выполнен
+[00:05.100–00:08.800] SPEAKER_01: біздің бағыт бойынша жоспар орындалды
 ```
 
-Для одного файла с выводом JSON:
+Один файл:
 
-```powershell
-python .\stt_kazakh_russian.py ".\media\Совещание №1.mp3" --diarize
+```bash
+python stt_kazakh_russian.py "media/Совещание №1.mp3" --diarize --num-speakers 5
 ```
-
-Из Python, например для дальнейшего подключения к серверу:
 
 ```python
-from stt_kazakh_russian import transcribe_diarized
+from stt_kazakh_russian import transcribe, transcribe_diarized
 
-result = transcribe_diarized("meeting.wav", min_speakers=2, max_speakers=8)
+text = transcribe("meeting.wav")  # прежний API: строка
+result = transcribe_diarized("meeting.wav", max_speakers=8)
 for segment in result["segments"]:
     print(segment["start"], segment["end"], segment["speaker"], segment["text"])
 ```
 
-Результат содержит `text`, `duration`, `words`, `segments`, `speakers` и
-`speaker_turns`. Время указано в секундах от начала записи. В `words` у каждого
-слова есть `word`, `start`, `end`, `speaker`; в `segments` — `text`, `start`,
-`end`, `speaker`. `speaker_turns` содержит интервалы, полученные от pyannote.
-Можно задать точное `num_speakers` либо границы `min_speakers`/`max_speakers`.
+Возвращаются `text`, `duration`, `words`, `segments`, `speakers`, `speaker_turns` и
+`timestamps_approximate`. Время — секунды от начала записи. Слово назначается голосу
+с максимальным пересечением по времени; при равенстве или отсутствии пересечения
+получает `speaker: null` (`UNKNOWN` в консоли). Смена интервала/голоса либо пауза
+больше 1,5 секунды начинает новую реплику. Слова не удаляются.
 
-Таймкоды слов приблизительные (`timestamps_approximate: true`): они рассчитаны
-по выходным CTC-кадрам текущей модели. Слово получает голос с наибольшим
-пересечением по времени. Если пересечения нет или два голоса набрали одинаковое
-пересечение, `speaker` равен `null` (в консоли `UNKNOWN`). Слова сохраняются
-даже без определённого говорящего.
+Число голосов можно задать точно через `num_speakers` или ограничить сверху через
+`max_speakers` (по умолчанию 8). Эти параметры взаимоисключающие. NeMo clustering
+не поддерживает нижнюю границу `min_speakers > 1`: такой запрос вызывает понятную
+ошибку, используйте точное количество или верхнюю границу.
 
-`SPEAKER_00` — условный голос в пределах одной записи. Имена участников и
-исполнители поручений автоматически не определяются. Используется exclusive
-диаризация: на интервал назначается один голос. Одновременная речь нескольких
-людей не разделяется на независимые аудиодорожки и может распознаваться неверно.
-Качество разделения голосов при переключении между языками нужно оценить на
-реальных записях совещаний.
+### Ограничения качества
 
-Диаризация и STT всегда выполняются на CUDA GPU. Модель диаризации после обработки
-освобождает VRAM перед запуском STT. Диаризация хранит полную волну записи в RAM для
+- TitaNet группирует голоса; распознавание текста на русском/казахском выполняет
+  прежняя `rukk`. Качество на смешанной речи нужно оценивать на ваших записях.
+- `SPEAKER_00` — голос внутри одной записи. Это ещё не имя человека и не исполнитель
+  поручения; для этого нужен отдельный этап сопоставления участников.
+- Метки слов приблизительные: вычисляются по CTC-кадрам, без forced alignment.
+- Одновременная речь нескольких людей не разделяется на отдельные дорожки.
+- Пунктуация и извлечение поручений в этом конвейере не добавляются.
 
-согласованного определения голосов. Загрузка
-модели при первом запуске требует интернета; `DIARIZATION_MODEL` позволяет
-указать путь к заранее скачанному локальному каталогу модели.
+## Длинные записи и память GPU
 
-Проверки декодирования, временных меток и сопоставления говорящих без скачивания
-моделей (при установленных основных зависимостях):
+STT читает аудио окнами: 10 секунд новой речи + до 1 секунды контекста с каждой
+стороны. На границах контекст отбрасывается до непрерывного CTC-декодирования.
+При CUDA OOM окно уменьшается вплоть до 1 секунды с повтором текущего участка.
+Ошибки нехватки памяти при загрузке самих весов требуют освобождения VRAM.
 
-```powershell
-python -m unittest discover -s tests -v
+```bash
+python stt_kazakh_russian.py "media/Совещание №1.mp3" --chunk-seconds 5 --overlap-seconds 0.5
 ```
-=======
+
+Диаризация временно читает полную волну в RAM, преобразует её в mono 16 kHz WAV
+и кластеризует голоса всей записи. Промежуточные WAV/JSON/RTTM удаляются при выходе
+из вызова, в том числе при обычной ошибке; после аварийного завершения процесса
+они могут остаться в системной временной папке. Это локальные файлы.
+
+Перед NeMo освобождается GPU-кэш предыдущей STT-модели; после NeMo освобождаются
+его модели, затем запускается STT. Размер батча NeMo — 8. Запускайте один процесс
+обработки на GPU. Окна STT не уменьшают потребление памяти самой диаризацией.
+
+SoundFile/libsndfile читает WAV, FLAC, OGG, MP3 в поддерживаемых сборках.
+Неподдерживаемые форматы (например, M4A) предварительно конвертируйте в WAV.
+
+Источники: [NeMo и поддерживаемые платформы](https://pypi.org/project/nemo-toolkit/2.7.2/),
+[ClusteringDiarizer: загрузка локальных .nemo](https://github.com/NVIDIA/NeMo/blob/v2.7.2/nemo/collections/asr/models/clustering_diarizer.py),
+[модель смешанной русско-казахской речи](https://huggingface.co/alibiserikbay/kazakh-russian-mixed-stt),
+[PyTorch CUDA 13.0](https://pytorch.org/get-started/previous-versions/#v2110).
+
+---
+
 # QORIT — AI-протоколирование совещаний
 
 Рабочий прототип: транскрипт с диаризацией, поручения с ответственными и сроками, саммари и экспорт протокола. Интерфейс демонстрирует русскую, казахскую и смешанную речь.
@@ -204,7 +236,6 @@ python3 server.py
 
 ## Контур и развитие
 
-`Teams/Zoom/Meet или запись → локальный Whisper/Vosk → локальный pyannote → локальная LLM → QORIT → PDF/DOCX/СЭД`.
+`Teams/Zoom/Meet или запись → локальный rukk STT → локальный NVIDIA NeMo → локальная LLM → QORIT → PDF/DOCX/СЭД`.
 
 В `server.py` реализован автономный демонстрационный адаптер без зависимостей. В production его заменяют self-hosted STT, диаризация и LLM — параметры уже вынесены в `.env`. Аудио и текст не уходят во внешние API.
->>>>>>> my-feature

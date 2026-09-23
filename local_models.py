@@ -43,7 +43,9 @@ def configure_offline_runtime() -> None:
         "HF_HUB_DISABLE_TELEMETRY": "1",
         "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1",
         "TRANSFORMERS_OFFLINE": "1",
+        "HF_DATASETS_OFFLINE": "1",
         "DO_NOT_TRACK": "1",
+        "OTEL_SDK_DISABLED": "true",
         "WANDB_MODE": "disabled",
         "WANDB_DISABLED": "true",
     }.items():

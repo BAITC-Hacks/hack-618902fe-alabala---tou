@@ -1,9 +1,9 @@
 """Speaker alignment and integration checks without downloaded models."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -62,20 +62,39 @@ class SpeakerAssignmentTests(unittest.TestCase):
 
 class DiarizationIntegrationTests(unittest.TestCase):
     def test_waveform_is_mono_16khz_and_turns_are_clipped(self):
-        annotation = Mock()
-        annotation.itertracks.return_value = [(SimpleNamespace(start=-0.1, end=1.5), 0, "SPEAKER_00")]
-        pipeline = Mock(return_value=SimpleNamespace(exclusive_speaker_diarization=annotation))
+        pipeline = Mock()
+        captured = {}
+
+        def load_pipeline(config):
+            captured["config"] = config
+            manifest = json.loads(Path(config["diarizer"]["manifest_filepath"]).read_text(encoding="utf-8"))
+            captured["manifest"] = manifest
+            captured["audio"], captured["rate"] = sf.read(manifest["audio_filepath"])
+
+            def run():
+                rttm_dir = Path(config["diarizer"]["out_dir"]) / "pred_rttms"
+                rttm_dir.mkdir(parents=True)
+                (rttm_dir / "recording.rttm").write_text(
+                    "SPEAKER recording 1 -0.1 1.6 <NA> <NA> speaker_4 <NA> <NA>\n", encoding="utf-8"
+                )
+            pipeline.diarize.side_effect = run
+            return pipeline
+
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "audio.wav"
             sf.write(path, np.zeros((8000, 2), dtype=np.float32), 8000)
-            with patch.object(diarization.torch.cuda, "is_available", return_value=True), patch.object(diarization, "_load_pipeline", return_value=pipeline):
+            with (patch.object(diarization.torch.cuda, "is_available", return_value=True),
+                  patch.object(diarization, "require_model", side_effect=lambda name: Path(temp) / f"{name}.nemo"),
+                  patch.object(diarization, "_load_pipeline", side_effect=load_pipeline)):
                 result = diarization.diarize(path, num_speakers=2)
         self.assertEqual(result, [turn("SPEAKER_00", 0, 1)])
-        audio = pipeline.call_args.args[0]
-        self.assertEqual(audio["sample_rate"], 16000)
-        self.assertEqual(tuple(audio["waveform"].shape), (1, 16000))
-        self.assertEqual(pipeline.call_args.kwargs, {"num_speakers": 2})
-        self.assertEqual([call.args[0].type for call in pipeline.method_calls if call[0] == "to"], ["cuda", "cpu"])
+        self.assertEqual(captured["rate"], 16000)
+        self.assertEqual(captured["audio"].shape, (16000,))
+        self.assertEqual(captured["manifest"]["num_speakers"], 2)
+        self.assertEqual(captured["config"]["device"], "cuda")
+        self.assertTrue(captured["config"]["diarizer"]["clustering"]["parameters"]["oracle_num_speakers"])
+        self.assertFalse(Path(captured["manifest"]["audio_filepath"]).exists())
+        self.assertEqual([call.args[0].type for call in pipeline.method_calls if call[0] == "to"], ["cpu"])
 
     def test_diarized_api_passes_counts_and_preserves_transcript(self):
         transcript = {"text": "сәлем коллеги", "duration": 2, "timestamps_approximate": True,
