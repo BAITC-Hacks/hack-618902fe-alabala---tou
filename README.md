@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # hack-618902fe-alabala---tou
 Hackathon team repository for Alabala - ToU
 
@@ -85,3 +86,35 @@ WAV/FLAC first.
 References: [model card and recommended chunk lengths](https://huggingface.co/alibiserikbay/kazakh-russian-mixed-stt),
 [CTC chunking with overlap](https://huggingface.co/blog/asr-chunking),
 [PyTorch CUDA memory management](https://docs.pytorch.org/docs/stable/notes/cuda.html#memory-management).
+=======
+# QORIT — AI-протоколирование совещаний
+
+Рабочий прототип: транскрипт с диаризацией, поручения с ответственными и сроками, саммари и экспорт протокола. Интерфейс демонстрирует русскую, казахскую и смешанную речь.
+
+## Запуск
+
+Нужен только Python 3.10+.
+
+```bash
+cp .env.example .env
+# В .env замените APP_IP на LAN-IP машины, если демонстрируете с другого устройства
+python3 server.py
+```
+
+Откройте `http://localhost:8000` или `http://APP_IP:PORT`. Фронтенд — чистый HTML/CSS/JS, без Django и фреймворков.
+
+## Демонстрация
+
+1. Протокол показывает реплики с метками говорящих и `RU · KZ · MIX`.
+2. «Обработать» обращается к локальному API и обновляет саммари/поручения.
+3. В «Поручениях» видны суть, ответственный, срок и статус.
+4. Нажмите DOCX или PDF, чтобы получить файл протокола.
+
+Загрузка аудио/видео служит точкой подключения реального конвейера. В демо файл не отправляется наружу и не сохраняется.
+
+## Контур и развитие
+
+`Teams/Zoom/Meet или запись → локальный Whisper/Vosk → локальный pyannote → локальная LLM → QORIT → PDF/DOCX/СЭД`.
+
+В `server.py` реализован автономный демонстрационный адаптер без зависимостей. В production его заменяют self-hosted STT, диаризация и LLM — параметры уже вынесены в `.env`. Аудио и текст не уходят во внешние API.
+>>>>>>> my-feature
