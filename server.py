@@ -168,7 +168,7 @@ def create_app(config: dict | None = None) -> Flask:
         STT_DIARIZE=os.getenv("STT_DIARIZE", "true"),
         LLM_PROVIDER=os.getenv("LLM_PROVIDER", "ollama"),
         OLLAMA_URL=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
-        OLLAMA_MODEL=os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
+        OLLAMA_MODEL=os.getenv("OLLAMA_MODEL", "Gemma-4-12B-it-Q6_K:latest"),
         OLLAMA_TIMEOUT=float(os.getenv("OLLAMA_TIMEOUT", "180")),
     )
     if config:

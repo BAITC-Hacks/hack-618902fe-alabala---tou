@@ -307,7 +307,7 @@ def _validate_task(raw: dict, chunk: list[dict], anchor: date, as_of: date) -> d
 
 def analyze_meeting(transcript: dict, *, meeting_date: date, as_of: date,
                     provider: str = "ollama", ollama_url: str = "http://127.0.0.1:11434",
-                    ollama_model: str = "qwen2.5:7b", timeout: float = 120) -> dict:
+                    ollama_model: str = "Gemma-4-12B-it-Q6_K:latest", timeout: float = 120) -> dict:
     """Return tasks, aggregate counts, and limitations; raise on provider failure."""
     if provider not in {"ollama", "local_llama"}:
         raise AnalysisError("Поддерживается LLM_PROVIDER=ollama (или local_llama).")

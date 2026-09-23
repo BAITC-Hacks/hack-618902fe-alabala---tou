@@ -15,21 +15,33 @@
 cp -n .env.example .env
 ```
 
-Установите [Ollama](https://docs.ollama.com/quickstart) в том же Linux/WSL-окружении.
-Загрузите модель до перехода в автономный режим:
+Используется уже установленная в Windows Ollama модель
+`Gemma-4-12B-it-Q6_K:latest`. Проверьте её точный тег в PowerShell:
 
-```bash
-ollama pull qwen2.5:7b
-# Только если Ollama не запущена как служба, в отдельном терминале:
-ollama serve
+```powershell
+ollama list
 ```
 
 В `.env` задайте `LLM_PROVIDER=ollama`, `OLLAMA_URL=http://127.0.0.1:11434`
-и `OLLAMA_MODEL=qwen2.5:7b`. Старое значение `local_llama` также распознаётся
+и `OLLAMA_MODEL=Gemma-4-12B-it-Q6_K:latest`. Старое значение `local_llama` также распознаётся
 как Ollama. Другую локальную модель можно указать через `OLLAMA_MODEL`;
 она должна поддерживать [структурированный JSON-вывод](https://docs.ollama.com/capabilities/structured-outputs).
-Если Ollama работает в другом окружении, задайте доступный оттуда адрес;
-localhost внутри WSL/контейнера может отличаться от localhost Windows.
+Если Ollama работает в другом окружении, задайте доступный оттуда адрес.
+На этой машине Ollama запущена в Windows и сейчас слушает только Windows
+`127.0.0.1:11434`; сервер внутри WSL по этому адресу её не видит. Чтобы
+подключить WSL, настройте Ollama на приём соединений с интерфейса WSL и
+укажите адрес Windows со стороны WSL в `OLLAMA_URL`. Например, после настройки
+Windows Ollama с `OLLAMA_HOST=0.0.0.0:11434` и её перезапуска:
+
+```bash
+export OLLAMA_URL="http://$(ip route show default | awk '{print $3}'):11434"
+/opt/qorit-nemo/bin/python server.py
+```
+
+Учитывайте правила Windows Firewall для WSL. Адрес шлюза WSL может меняться;
+команда выше получает его при каждом запуске. При `OLLAMA_HOST=0.0.0.0:11434`
+Ollama слушает и другие сетевые интерфейсы, поэтому ограничьте доступ к порту
+в Windows Firewall, если сервер доступен из общей сети.
 
 ```bash
 /opt/qorit-nemo/bin/python server.py
@@ -90,7 +102,7 @@ PDF/DOCX используют ту же схему анализа, что и JSO
   "as_of": "2026-09-23",
   "timezone": "Asia/Qyzylorda",
   "generated_at": "2026-09-23T10:00:00+00:00",
-  "analysis_method": "ollama:qwen2.5:7b",
+  "analysis_method": "ollama:Gemma-4-12B-it-Q6_K:latest",
   "transcript": {
     "text": "айгуль подготовьте отчет до завтра",
     "segments": [],

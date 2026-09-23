@@ -184,7 +184,7 @@ class OllamaTransportTests(unittest.TestCase):
     def test_configured_url_schema_nonstreaming_and_gpu_unload(self):
         with patch.object(analysis, "urlopen", return_value=self.response('{"tasks": []}')) as request:
             result = analysis._request_tasks([{"text": "начинаем", "speaker": None}], ANCHOR,
-                                             "http://localhost:11434/", "qwen2.5:7b", 42)
+                                             "http://localhost:11434/", "Gemma-4-12B-it-Q6_K:latest", 42)
         self.assertEqual(result, [])
         sent = request.call_args.args[0]
         self.assertEqual(sent.full_url, "http://localhost:11434/api/chat")
