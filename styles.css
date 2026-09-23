@@ -54,6 +54,32 @@ details.workspace { display: block; padding: 0; }
 .task-evidence > summary { cursor: pointer; color: #89d7cb; font-size: 12px; }
 .task-evidence blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid #487367; font-size: 12px; line-height: 1.7; color: #c9d8d4; overflow-wrap: anywhere; }
 .people-list { grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); }
+.consent { display: flex; align-items: flex-start; gap: 8px; color: #bbc9cb; font-size: 12px; line-height: 1.5; margin: 12px 0; }
+.consent input { flex: none; margin: 3px 0; accent-color: var(--accent); width: 16px; height: 16px; }
+.meeting-card audio { width: 100%; height: 36px; margin-top: 12px; }
+.draft-tools { margin-top: 20px; border: 1px solid var(--line); border-radius: 7px; padding: 16px; background: var(--panel); }
+.draft-tools > summary { cursor: pointer; color: #b9dcd7; font-size: 13px; }
+.draft-tools .muted { line-height: 1.6; margin: 12px 0; }
+.meeting-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr); gap: 16px; margin: 20px 0; }
+.meeting-fields label, .person label, .task-title-label, .task-filter { display: block; color: var(--muted); font-size: 12px; }
+.meeting-fields input, .person input, .task-title-label textarea, .task-filter select { width: 100%; min-width: 0; margin: 8px 0 12px; min-height: 40px; padding: 10px; border: 1px solid #3d4d54; border-radius: 5px; background: #171e25; color: var(--ink); font: 13px/1.5 Arial,sans-serif; }
+.task-title-label textarea { resize: vertical; }
+.person label { margin-top: 18px; }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.task-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.task-dashboard { margin-top: 20px; }
+.task-dashboard .count-overdue b { color: #f8a39b; }
+.task-dashboard .count-upcoming b { color: var(--warning); }
+.task-filter { max-width: 300px; }
+#taskStatus { margin: 0 0 14px; }
+#undoTask { margin-bottom: 14px; }
+.due-badge { border-radius: 4px; padding: 5px 8px; font-size: 11px; background: #2b353e; color: #c0cbd5; }
+.state-overdue { color: #ffb9b2; background: #482c30; }
+.state-upcoming { color: #e9ce88; background: #3f3b2b; }
+.state-done { color: #9de1c6; background: #1c3e37; }
+.reminder-banner { margin-top: 16px; padding: 14px 16px; border: 1px solid #665a37; border-radius: 6px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: #302e25; }
+.reminder-banner p { margin: 0; font-size: 12px; color: #eed599; line-height: 1.6; flex: 1 1 280px; }
+.person p, .person b, .review-note, .notice, #exportStatus, #storageStatus, #taskStatus { overflow-wrap: anywhere; }
 @media (max-width: 1100px) {
   .shell { padding-left: 24px; padding-right: 24px; }
   .hero { padding: 24px; }
@@ -79,4 +105,6 @@ details.workspace { display: block; padding: 0; }
   .utterance time { display: none; }
   .breadcrumbs { font-size: 11px; }
   .side-nav a { padding-left: 9px; padding-right: 9px; }
+  .meeting-fields { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }

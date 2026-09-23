@@ -118,3 +118,43 @@ test('empty text yields no fabricated participants or tasks', () => {
   assert.deepEqual(result.people, []);
   assert.deepEqual(result.utterances, []);
 });
+
+test('anonymous speakers remain mappable but their identity and task owner are unconfirmed', () => {
+  const result = analyzeTranscript([
+    {speaker: 'SPEAKER_00', time: '00:01', text: 'Подготовлю отчёт завтра.'},
+    {speaker: 'Участник 2', time: '00:03', text: 'Отправлю презентацию сегодня.'},
+    {speaker: null, time: '00:05', text: 'Проверю смету до пятницы.'}
+  ]);
+  assert.ok(result.people.some(([name, role]) => name === 'SPEAKER_00' && /не сопоставлен/.test(role)));
+  assert.deepEqual(result.tasks.map(task => task.owner), ['SPEAKER_00', 'Участник 2', 'Не указан']);
+  assert.ok(result.tasks.every(task => task.needsReview));
+  assert.ok(result.warnings.some(text => /Метки говорящих/.test(text)));
+  const labelled = analyzeTranscript('SPEAKER_00: Подготовлю отчёт завтра.');
+  assert.equal(labelled.tasks[0].owner, 'SPEAKER_00');
+  assert.equal(labelled.tasks[0].needsReview, true);
+});
+
+test('array analysis preserves valid numeric STT timings and original diarization identity', () => {
+  const turns = [{speaker: 'Айжан', originalSpeaker: 'SPEAKER_00', time: '01:05', start: 65.25, end: 70.5, text: 'Подготовлю отчёт завтра.'}];
+  const before = structuredClone(turns);
+  const result = analyzeTranscript(turns);
+  assert.deepEqual(result.utterances[0], turns[0]);
+  assert.deepEqual(turns, before);
+  for (const bad of [{start: '1', end: 2}, {start: -1, end: 2}, {start: 3, end: 2}, {start: 0, end: Infinity}, {start: 0}]) {
+    const utterance = analyzeTranscript([{...turns[0], start: undefined, end: undefined, ...bad}]).utterances[0];
+    assert.equal(utterance.start, undefined);
+    assert.equal(utterance.end, undefined);
+  }
+  assert.equal(analyzeTranscript([{...turns[0], originalSpeaker: 'SPEAKER_00\nspoof'}]).utterances[0].originalSpeaker, undefined);
+});
+
+test('pasted STT-style labels preserve anonymous and unknown turn boundaries', () => {
+  const result = analyzeTranscript('[00:01] SPEAKER_00: Подготовлю отчёт завтра.\n[00:03] Айжан: Отправлю презентацию сегодня.\n[00:05] Не указан: Проверю смету до пятницы.\n[00:07] SPEAKER_01: Обновлю договор завтра.');
+  assert.deepEqual(result.utterances.map(item => [item.time, item.speaker]), [
+    ['00:01', 'SPEAKER_00'], ['00:03', 'Айжан'], ['00:05', 'Не указан'], ['00:07', 'SPEAKER_01']
+  ]);
+  assert.equal(result.tasks.find(task => /смет/.test(task.title)).owner, 'Не указан');
+  assert.equal(result.tasks.find(task => /смет/.test(task.title)).needsReview, true);
+  assert.ok(result.people.some(([name]) => name === 'SPEAKER_00'));
+  assert.ok(!result.people.some(([name]) => name === 'Не указан'));
+});
