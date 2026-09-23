@@ -117,6 +117,95 @@ class GroundingTests(unittest.TestCase):
         self.assertNotIn("несуществующая цитата", " ".join(captured.output))
         self.assertNotIn("закрытое содержание", " ".join(captured.output))
 
+    def test_repairs_only_invalid_evidence_and_preserves_actions_and_valid_tasks(self):
+        original = task("Айгуль, подготовьте отчет до завтра.")
+        valid = task("иван проверьте договор до завтра", title="Проверить договор",
+                     assignee="иван", direction="legal")
+        repair = {"source_quote": "айгуль подготовьте отчет до завтра", "deadline_text": "до завтра"}
+        transcript = {"text": repair["source_quote"] + " " + valid["source_quote"]}
+        with patch.object(analysis, "_request_llama_tasks", side_effect=[[original, valid], [repair]]) as model:
+            result = analysis.analyze_meeting(transcript, meeting_date=ANCHOR, as_of=ANCHOR)
+        self.assertEqual(model.call_count, 2)
+        requests = model.call_args.kwargs["repair_requests"]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["title"], original["title"])
+        self.assertEqual(requests[0]["validation_error"], "ungrounded task")
+        first, second = result["tasks"]
+        self.assertEqual(first["source_quote"], repair["source_quote"])
+        self.assertEqual(first["title"], original["title"])
+        self.assertEqual(first["assignee"], original["assignee"])
+        self.assertTrue(first["needs_review"])
+        self.assertEqual(second["source_quote"], valid["source_quote"])
+        self.assertEqual(second["title"], valid["title"])
+        self.assertFalse(second["needs_review"])
+        self.assertEqual(result["dashboard"]["total"], 2)
+
+    def test_groups_invalid_evidence_in_one_repair_request(self):
+        invalid = [task("айгуль, подготовьте отчет до завтра"), task(deadline_text="к завтра")]
+        repair = {"source_quote": "айгуль подготовьте отчет до завтра", "deadline_text": "до завтра"}
+        with patch.object(analysis, "_request_llama_tasks", side_effect=[invalid, [repair, repair]]) as model:
+            result = analysis.analyze_meeting({"text": repair["source_quote"]},
+                                              meeting_date=ANCHOR, as_of=ANCHOR)
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual(len(model.call_args.kwargs["repair_requests"]), 2)
+        self.assertEqual(result["dashboard"]["total"], 1)
+
+    def test_real_meeting_quote_cannot_skip_intervening_speaker_reply(self):
+        # Regression from the real API capture: the model omitted the objection
+        # between the requested audit and the subsequently agreed deadline.
+        opening = "так проврьте мне нужен полный аудит две недели вам достаточно"
+        reply = "если честно то конечно две недели маловато там же ещё документооборот с площадками"
+        agreement = "хорошо три недели но не больше к пятнадцатому октября жду сводный отчёт по каждой площадке отдельно"
+        chunk = [{"speaker": "SPEAKER_00", "text": opening},
+                 {"speaker": "SPEAKER_04", "text": reply},
+                 {"speaker": "SPEAKER_00", "text": agreement}]
+        raw = task(opening.removeprefix("так ") + " " + agreement,
+                   title="проврьте мне нужен полный аудит", assignee="нурлн сагатович",
+                   deadline="2026-10-15", deadline_text="к пятнадцатому октября",
+                   urgency="high", direction="safety", needs_review=True)
+        with self.assertRaisesRegex(ValueError, "ungrounded task"):
+            analysis._validate_task(raw, chunk, ANCHOR, ANCHOR)
+        repair = {"source_quote": " ".join((opening.removeprefix("так "), reply, agreement)),
+                  "deadline_text": "к пятнадцатому октября"}
+        with patch.object(analysis, "_request_llama_tasks", side_effect=[[raw], [repair]]) as model:
+            result = analysis.analyze_meeting({"segments": chunk}, meeting_date=ANCHOR, as_of=ANCHOR)
+        model.assert_called_with(chunk, ANCHOR, "http://127.0.0.1:8080", "gemma-4-12b-it-Q4_K_S", 600,
+                                 repair_requests=[{"title": raw["title"], "source_quote": raw["source_quote"],
+                                                   "deadline_text": raw["deadline_text"],
+                                                   "validation_error": "ungrounded task"}])
+        item = result["tasks"][0]
+        self.assertEqual(item["title"], raw["title"])
+        self.assertEqual(item["source_quote"], repair["source_quote"])
+        self.assertIn(reply, item["source_quote"])
+        self.assertEqual(item["deadline"], "2026-10-15")
+        self.assertIsNone(item["source_speaker"])
+        self.assertIsNone(item["assignee"])
+        self.assertTrue(item["needs_review"])
+
+    def test_failed_incomplete_or_task_replacing_repair_is_rejected_without_third_request(self):
+        repairs = [[], [{"source_quote": None, "deadline_text": None}],
+                   [{"source_quote": "придуманное поручение", "deadline_text": None}],
+                   [{"source_quote": "айгуль подготовьте отчет до завтра", "deadline_text": "через неделю"}],
+                   [{"source_quote": "айгуль подготовьте отчет до завтра", "deadline_text": "до завтра",
+                     "title": "Подмененное действие"}]]
+        for repaired in repairs:
+            with self.subTest(repaired=repaired), patch.object(
+                analysis, "_request_llama_tasks", side_effect=[[task("неверная цитата")], repaired]
+            ) as model, self.assertRaises(analysis.AnalysisError):
+                analysis.analyze_meeting({"text": "айгуль подготовьте отчет до завтра"},
+                                         meeting_date=ANCHOR, as_of=ANCHOR)
+            self.assertEqual(model.call_count, 2)
+
+    def test_structural_errors_and_large_repair_context_are_not_retried(self):
+        cases = [[task(completed="false")], [task("я" * 2500) for _ in range(3)]]
+        for items in cases:
+            with self.subTest(count=len(items)), patch.object(
+                analysis, "_request_llama_tasks", return_value=items
+            ) as model, self.assertRaises(analysis.AnalysisError):
+                analysis.analyze_meeting({"text": "айгуль подготовьте отчет до завтра"},
+                                         meeting_date=ANCHOR, as_of=ANCHOR)
+            model.assert_called_once()
+
     def test_invalid_date_enum_boolean_and_extra_fields_are_rejected(self):
         for change in ({"deadline": "2026-02-30"}, {"urgency": "urgent"},
                        {"direction": "madeup"}, {"completed": "false"}, {"extra": 7}):
@@ -209,6 +298,22 @@ class LocalLlamaTransportTests(unittest.TestCase):
             }})
             self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
             self.assertEqual(request.call_args.kwargs["timeout"], 42)
+
+    def test_evidence_repair_schema_cannot_replace_or_drop_actions(self):
+        proposed = [{"title": "Подготовить отчет", "source_quote": "айгуль, подготовьте отчет",
+                     "deadline_text": None, "validation_error": "ungrounded task"}]
+        content = '{"tasks": [{"source_quote": null, "deadline_text": null}]}'
+        with patch.object(analysis, "urlopen", return_value=self.response(content)) as request:
+            result = analysis._request_llama_tasks([{"text": "айгуль подготовьте отчет", "speaker": None}],
+                                                   ANCHOR, "http://localhost:8080", "model", 42,
+                                                   repair_requests=proposed)
+        self.assertEqual(result, [{"source_quote": None, "deadline_text": None}])
+        body = json.loads(request.call_args.args[0].data)
+        array = body["response_format"]["json_schema"]["schema"]["properties"]["tasks"]
+        self.assertEqual((array["minItems"], array["maxItems"]), (1, 1))
+        self.assertFalse(array["items"]["additionalProperties"])
+        self.assertEqual(set(array["items"]["properties"]), {"source_quote", "deadline_text"})
+        self.assertEqual(json.loads(body["messages"][1]["content"])["proposed_tasks"], proposed)
 
     def test_default_provider_uses_q4_k_s_model(self):
         transcript = {"text": "начинаем"}
